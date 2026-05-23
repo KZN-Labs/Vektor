@@ -1,6 +1,9 @@
 node_modules/
 dist/
+dist-ui/
+app/
 .env*
+!.env.example
 *.key
 *privkey*
 .DS_Store

@@ -9,6 +9,7 @@
  * Start: tsx src/server.ts
  */
 
+import 'dotenv/config'
 import express    from 'express'
 import cors       from 'cors'
 import Routex     from 'routex-sui'
