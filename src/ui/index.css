@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+
+body {
+  background: #0a0a0f;
+  color: #f1f5f9;
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2a3e; border-radius: 3px; }
+
+/* Score ring animation */
+@keyframes score-in { from { stroke-dashoffset: 283; } }
+
+/* Glowing button */
+.btn-fix {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
+  transition: box-shadow 0.2s;
+}
+.btn-fix:hover { box-shadow: 0 0 30px rgba(245, 158, 11, 0.5); }
+
+.btn-proceed {
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
+  transition: box-shadow 0.2s;
+}
+.btn-proceed:hover { box-shadow: 0 0 30px rgba(99, 102, 241, 0.5); }

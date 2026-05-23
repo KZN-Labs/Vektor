@@ -1,47 +1,54 @@
 {
   "name": "vektor-sui",
   "version": "0.1.0",
-  "description": "Intent engine for Sui. Parse, guard, compile, and execute swap intents with on-chain logging and zkLogin auth.",
+  "description": "Intent engine for Sui — parse, guard, compile, execute.",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
+      "types":   "./dist/index.d.ts",
+      "import":  "./dist/index.js",
       "require": "./dist/index.cjs"
     }
   },
-  "files": [
-    "dist",
-    "contracts"
-  ],
+  "files": ["dist", "contracts"],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
-    "test": "tsx tests/integration.test.ts"
+    "build":      "tsup",
+    "dev:server": "tsx src/server.ts",
+    "dev:ui":     "vite",
+    "dev":        "concurrently \"npm run dev:server\" \"npm run dev:ui\"",
+    "test":       "tsx tests/integration.test.ts"
   },
-  "keywords": [
-    "sui",
-    "defi",
-    "intent",
-    "routing",
-    "zklogin",
-    "ptb",
-    "aggregator"
-  ],
-  "license": "MIT",
   "dependencies": {
-    "routex-sui": "^1.0.0",
-    "@mysten/sui": "^2.17.0",
-    "uuid": "^11.1.0"
+    "routex-sui":                        "^1.0.0",
+    "@mysten/sui":                       "^2.17.0",
+    "uuid":                              "^11.1.0",
+    "@anthropic-ai/sdk":                 "^0.55.0",
+    "@pythnetwork/price-service-client": "^1.9.0",
+    "express":                           "^5.0.1",
+    "cors":                              "^2.8.5"
   },
   "devDependencies": {
-    "@types/node": "^25.9.1",
-    "@types/uuid": "^10.0.0",
-    "tsup": "^8.5.1",
-    "tsx": "^4.22.3",
-    "typescript": "^6.0.3"
-  }
+    "@types/cors":        "^2.8.17",
+    "@types/express":     "^5.0.0",
+    "@types/node":        "^25.9.1",
+    "@types/react":       "^18",
+    "@types/react-dom":   "^18",
+    "@types/uuid":        "^10.0.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "autoprefixer":       "^10",
+    "concurrently":       "^9.0.0",
+    "postcss":            "^8",
+    "react":              "^18",
+    "react-dom":          "^18",
+    "tailwindcss":        "^3",
+    "tsup":               "^8.5.1",
+    "tsx":                "^4.22.3",
+    "typescript":         "^6.0.3",
+    "vite":               "^6.0.0"
+  },
+  "keywords": ["sui", "defi", "intent", "routing", "zklogin", "ptb", "aggregator"],
+  "license": "MIT"
 }
