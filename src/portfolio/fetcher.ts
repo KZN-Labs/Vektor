@@ -1,0 +1,164 @@
+/**
+ * Portfolio fetcher — pulls token balances, NAVI positions, and recent transactions
+ * from Sui RPC. Used on wallet connect and for portfolio analysis.
+ */
+
+import { SuiJsonRpcClient as SuiClient, getJsonRpcFullnodeUrl as getFullnodeUrl } from '@mysten/sui/jsonRpc'
+import { getAddressPortfolio, getHealthFactorCall } from 'navi-sdk'
+
+const client = new SuiClient({ url: getFullnodeUrl('mainnet'), network: 'mainnet' } as any)
+
+/* ─── Known tokens ───────────────────────────────────────────────────────── */
+
+const KNOWN_COINS: Record<string, { symbol: string; decimals: number }> = {
+  '0x2::sui::SUI':                                                                                          { symbol: 'SUI',  decimals: 9 },
+  '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN':                        { symbol: 'USDC', decimals: 6 },
+  '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN':                        { symbol: 'USDT', decimals: 6 },
+  '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN':                        { symbol: 'WETH', decimals: 8 },
+  '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881::coin::COIN':                        { symbol: 'WBTC', decimals: 8 },
+  '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946b270::deep::DEEP':                        { symbol: 'DEEP', decimals: 6 },
+  '0xbde4ba4c2e274a60ce15c1cfff9e5c42e41654ac8b6d906a57efa4bd3c29f47d::hasui::HASUI':                     { symbol: 'haSUI', decimals: 9 },
+  '0x549e8b69270defbfafd4f94e17ec44cdbdd99820b33bda2278dea3b9a32d3f55::cert::CERT':                       { symbol: 'vSUI', decimals: 9 },
+}
+
+/* ─── Price fetching (CoinGecko fallback) ───────────────────────────────── */
+
+async function fetchPricesUsd(): Promise<Record<string, number>> {
+  try {
+    const ids = 'sui,usd-coin,tether,weth,wrapped-bitcoin,deepbook'
+    const url  = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`
+    const res  = await fetch(url, { signal: AbortSignal.timeout(5000) })
+    const json = await res.json() as Record<string, { usd: number }>
+    return {
+      SUI:   json['sui']?.usd        ?? 0,
+      USDC:  json['usd-coin']?.usd   ?? 1,
+      USDT:  json['tether']?.usd     ?? 1,
+      WETH:  json['weth']?.usd       ?? 0,
+      WBTC:  json['wrapped-bitcoin']?.usd ?? 0,
+      DEEP:  json['deepbook']?.usd   ?? 0,
+      haSUI: json['sui']?.usd        ?? 0,
+      vSUI:  json['sui']?.usd        ?? 0,
+    }
+  } catch {
+    return { SUI: 0, USDC: 1, USDT: 1, WETH: 0, WBTC: 0, DEEP: 0, haSUI: 0, vSUI: 0 }
+  }
+}
+
+/* ─── Main portfolio fetch ───────────────────────────────────────────────── */
+
+export interface TokenBalance {
+  coinType: string
+  symbol:   string
+  raw:      string
+  formatted: string
+  usdValue:  number
+}
+
+export interface PortfolioSnapshot {
+  wallet:     string
+  fetchedAt:  string
+  totalUsd:   number
+  balances:   TokenBalance[]
+  navi?: {
+    supplyBalances: Record<string, number>
+    borrowBalances: Record<string, number>
+    healthFactor:   number | null
+  }
+  recentTxs:  RecentTx[]
+}
+
+export interface RecentTx {
+  digest:    string
+  timestamp: string
+  kind:      string
+  status:    'success' | 'failure'
+}
+
+export async function fetchPortfolio(wallet: string): Promise<PortfolioSnapshot> {
+  const [allCoins, prices, recentTxs] = await Promise.allSettled([
+    client.getAllCoins({ owner: wallet }),
+    fetchPricesUsd(),
+    client.queryTransactionBlocks({
+      filter:  { FromAddress: wallet },
+      options: { showInput: false, showEffects: true },
+      limit:   20,
+      order:   'descending',
+    }),
+  ])
+
+  const coins   = allCoins.status  === 'fulfilled' ? allCoins.value.data   : []
+  const priceMap = prices.status   === 'fulfilled' ? prices.value           : {}
+  const txData   = recentTxs.status === 'fulfilled' ? recentTxs.value.data  : []
+
+  // Aggregate by coin type
+  const aggregated = new Map<string, bigint>()
+  for (const coin of coins) {
+    const existing = aggregated.get(coin.coinType) ?? 0n
+    aggregated.set(coin.coinType, existing + BigInt(coin.balance))
+  }
+
+  const balances: TokenBalance[] = []
+  for (const [coinType, raw] of aggregated) {
+    const known = KNOWN_COINS[coinType]
+    if (!known) continue
+    const decimals  = known.decimals
+    const formatted = (Number(raw) / 10 ** decimals).toFixed(decimals >= 9 ? 4 : 6)
+    const usdValue  = Number(formatted) * (priceMap[known.symbol] ?? 0)
+    balances.push({ coinType, symbol: known.symbol, raw: raw.toString(), formatted, usdValue })
+  }
+
+  balances.sort((a, b) => b.usdValue - a.usdValue)
+  const totalUsd = balances.reduce((s, b) => s + b.usdValue, 0)
+
+  // NAVI positions
+  let navi: PortfolioSnapshot['navi'] = undefined
+  try {
+    const portfolio = await getAddressPortfolio(wallet, false, client as any)
+    let healthFactor: number | null = null
+    try {
+      const hfRes = await getHealthFactorCall(wallet, client as any)
+      healthFactor = typeof hfRes === 'number' ? hfRes : null
+    } catch { /* ignore */ }
+
+    const supplyBalances: Record<string, number> = {}
+    const borrowBalances: Record<string, number> = {}
+    for (const [symbol, data] of portfolio) {
+      if (data.supplyBalance > 0) supplyBalances[symbol] = data.supplyBalance
+      if (data.borrowBalance > 0) borrowBalances[symbol] = data.borrowBalance
+    }
+    if (Object.keys(supplyBalances).length > 0 || Object.keys(borrowBalances).length > 0) {
+      navi = { supplyBalances, borrowBalances, healthFactor }
+    }
+  } catch { /* NAVI not available, skip */ }
+
+  const recentTxList: RecentTx[] = txData.map((tx: any) => ({
+    digest:    tx.digest,
+    timestamp: tx.timestampMs ? new Date(Number(tx.timestampMs)).toISOString() : '',
+    kind:      'transaction',
+    status:    tx.effects?.status?.status === 'success' ? 'success' : 'failure',
+  }))
+
+  return {
+    wallet,
+    fetchedAt: new Date().toISOString(),
+    totalUsd,
+    balances,
+    navi,
+    recentTxs: recentTxList,
+  }
+}
+
+/* ─── Transaction fetch for explainer ───────────────────────────────────── */
+
+export async function fetchTransaction(digest: string) {
+  return client.getTransactionBlock({
+    digest,
+    options: {
+      showInput:          true,
+      showEffects:        true,
+      showEvents:         true,
+      showBalanceChanges: true,
+      showObjectChanges:  true,
+    },
+  })
+}
