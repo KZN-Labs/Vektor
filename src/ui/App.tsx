@@ -35,7 +35,7 @@ const QUICK_ACTIONS = [
   'Go 50/50 SUI and USDC',
 ]
 
-const PLACEHOLDER = 'Swap, stake, route — give Vektor an order.'
+const PLACEHOLDER = 'Drop an intent.'
 
 /* ─── Label builder ──────────────────────────────────────────────────────── */
 
