@@ -3,8 +3,9 @@
  * Keyed to wallet address. Loaded into Claude system prompt on each new session.
  */
 
-import fs   from 'fs'
-import path from 'path'
+import fs             from 'fs'
+import path           from 'path'
+import { randomUUID } from 'crypto'
 
 const MEMORY_DIR = path.resolve(process.cwd(), 'data/memory')
 
@@ -77,7 +78,7 @@ export function addAlert(wallet: string, alert: Omit<UserAlert, 'id' | 'seen' | 
   const mem = getMemory(wallet)
   mem.pendingAlerts.push({
     ...alert,
-    id:        crypto.randomUUID(),
+    id:        randomUUID(),
     seen:      false,
     createdAt: new Date().toISOString(),
   })
