@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { ConnectModal, useCurrentAccount, useDisconnectWallet } from '@mysten/dapp-kit'
+import { ConnectModal, useCurrentAccount, useDisconnectWallet, useSuiClientQuery } from '@mysten/dapp-kit'
 import { PTBPreview }       from './PTBPreview'
 import { GuardianReport }   from './GuardianReport'
 import { ConfirmationGate } from './ConfirmationGate'
@@ -381,8 +381,35 @@ function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
 /* ─── Main App ───────────────────────────────────────────────────────────── */
 
 export default function App() {
-  const account              = useCurrentAccount()
+  const account                = useCurrentAccount()
   const { mutate: disconnect } = useDisconnectWallet()
+
+  // SUI balance — refreshes every 30 s
+  const { data: suiBalanceData } = useSuiClientQuery(
+    'getBalance',
+    { owner: account?.address ?? '', coinType: '0x2::sui::SUI' },
+    { enabled: !!account, refetchInterval: 30_000 },
+  )
+  const suiBalance = suiBalanceData
+    ? (Number(suiBalanceData.totalBalance) / 1e9).toFixed(2)
+    : null
+
+  // Wallet dropdown
+  const [walletOpen,    setWalletOpen]    = useState(false)
+  const walletRef                          = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!walletOpen) return
+    function onOutside(e: MouseEvent) {
+      if (walletRef.current && !walletRef.current.contains(e.target as Node)) setWalletOpen(false)
+    }
+    document.addEventListener('mousedown', onOutside)
+    return () => document.removeEventListener('mousedown', onOutside)
+  }, [walletOpen])
+
+  function copyAddress() {
+    if (account) navigator.clipboard.writeText(account.address)
+    setWalletOpen(false)
+  }
 
   const [connectOpen,  setConnectOpen]  = useState(false)
   const [messages,     setMessages]     = useState<ChatMessage[]>([])
@@ -586,14 +613,40 @@ export default function App() {
         </div>
 
         {account ? (
-          <button
-            onClick={() => disconnect()}
-            title="Click to disconnect"
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-white/10 bg-[#111118] text-sm text-slate-300 hover:border-purple-500/40 hover:text-white transition-colors font-mono"
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-            {walletLabel}
-          </button>
+          <div ref={walletRef} className="relative">
+            <button
+              onClick={() => setWalletOpen(o => !o)}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-[#111118] text-sm text-slate-300 hover:border-purple-500/40 hover:text-white transition-colors font-mono"
+            >
+              {suiBalance && (
+                <>
+                  <img src="/sui.svg" alt="SUI" className="w-4 h-4 shrink-0" />
+                  <span className="text-slate-300">{suiBalance} SUI</span>
+                  <span className="text-white/20 select-none">·</span>
+                </>
+              )}
+              <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+              <span>{walletLabel}</span>
+            </button>
+
+            {walletOpen && (
+              <div className="absolute right-0 top-full mt-2 w-44 rounded-xl border border-white/10 bg-[#111111] shadow-2xl z-50 overflow-hidden">
+                <button
+                  onClick={copyAddress}
+                  className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-purple-500/10 hover:text-white transition-colors"
+                >
+                  Copy Address
+                </button>
+                <div className="border-t border-white/5" />
+                <button
+                  onClick={() => { disconnect(); setWalletOpen(false) }}
+                  className="w-full px-4 py-3 text-left text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+                >
+                  Disconnect
+                </button>
+              </div>
+            )}
+          </div>
         ) : (
           <ConnectModal
             trigger={
