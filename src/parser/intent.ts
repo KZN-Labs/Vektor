@@ -1,13 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 import type { ParsedIntent } from './types.js'
 
-const client = new Anthropic()
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
 
-export async function parseIntent(userInput: string, walletContext?: string): Promise<ParsedIntent> {
-  const response = await client.messages.create({
-    model:      'claude-sonnet-4-20250514',
-    max_tokens: 1024,
-    system: `You are an intent parser for Vektor — a full financial OS for Sui blockchain.
+const SYSTEM_PROMPT = `You are an intent parser for Vektor — a full financial OS for Sui blockchain.
 Return ONLY valid JSON. No preamble. No explanation. No markdown.
 
 Known protocols: NAVI, Scallop, Cetus, Aftermath, DeepBook, Turbos, Bluefin
@@ -82,13 +78,16 @@ Return exactly this JSON shape:
   "inferred_steps": string[],
   "user_raw_input": string,
   "confidence":     number between 0 and 1
-}
+}`
 
-${walletContext ? `User wallet context:\n${walletContext}\n` : ''}`,
-    messages: [{ role: 'user', content: userInput }],
-  })
+export async function parseIntent(userInput: string, walletContext?: string): Promise<ParsedIntent> {
+  const model  = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+  const prompt = walletContext
+    ? `${SYSTEM_PROMPT}\n\nUser wallet context:\n${walletContext}\n\nUser input: ${userInput}`
+    : `${SYSTEM_PROMPT}\n\nUser input: ${userInput}`
 
-  const text    = response.content[0].type === 'text' ? response.content[0].text : '{}'
+  const result = await model.generateContent(prompt)
+  const text   = result.response.text()
   const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
   return JSON.parse(cleaned) as ParsedIntent
 }

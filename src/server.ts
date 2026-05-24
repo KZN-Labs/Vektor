@@ -11,7 +11,7 @@ import 'dotenv/config'
 import express          from 'express'
 import cors             from 'cors'
 import Routex           from 'routex-sui'
-import Anthropic        from '@anthropic-ai/sdk'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 
 import { parseIntent }          from './parser/intent.js'
 import { runGuardian }          from './guardian/v2.js'
@@ -37,7 +37,7 @@ import { startAlertMonitor, registerWallet }     from './alerts/monitor.js'
 
 const app    = express()
 const PORT   = 3001
-const claude = new Anthropic()
+const genAI  = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
 
 const SIM_ADDR = '0x0000000000000000000000000000000000000000000000000000000000000001'
 
@@ -434,14 +434,12 @@ app.post('/api/intent', async (req, res) => {
 
     if (!parsed.input_asset || !parsed.output_goal || !parsed.input_amount) {
       // Conversational fallback — ask Claude to respond naturally
-      const mem   = sender !== SIM_ADDR ? buildMemoryContext(sender) : ''
-      const reply = await claude.messages.create({
-        model:      'claude-sonnet-4-20250514',
-        max_tokens: 300,
-        system:     `You are Vektor, a DeFi financial OS for Sui. Be concise and helpful. ${mem}`,
-        messages:   [{ role: 'user', content: text }],
-      })
-      const msg = reply.content[0].type === 'text' ? reply.content[0].text : 'How can I help?'
+      const mem    = sender !== SIM_ADDR ? buildMemoryContext(sender) : ''
+      const model  = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+      const reply  = await model.generateContent(
+        `You are Vektor, a DeFi financial OS for Sui. Be concise and helpful. ${mem}\n\nUser: ${text}`
+      )
+      const msg    = reply.response.text().trim() || 'How can I help?'
       res.json({ ok: true, intent_type: 'general', parsedIntent: parsed, message: msg, actionLabel: '· VEKTOR' })
       return
     }
