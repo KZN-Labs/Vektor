@@ -35,6 +35,33 @@ const QUICK_ACTIONS = [
   'Go 50/50 SUI and USDC',
 ]
 
+const PLACEHOLDER = 'Swap, stake, route — give Vektor an order.'
+
+/* ─── Label builder ──────────────────────────────────────────────────────── */
+
+/** Build the bright purple action label from real API data. */
+function buildLabel(quote: any, report: any): string {
+  const from      = (quote.fromSymbol ?? 'SUI').toUpperCase()
+  const to        = (quote.toSymbol   ?? 'USDC').toUpperCase()
+  const protocols = (quote.route ?? []).map((s: any) => s.protocol.toUpperCase())
+  const score     = report?.score ?? '?'
+
+  if (protocols.length === 0) {
+    return `· SWAP · ${from} → ${to} · SCORE ${score}/100`
+  }
+
+  // Build chain: SUI → AFTERMATH → CETUS → USDC
+  const chain = [from, ...protocols, to].join(' → ')
+  return `· SWAP · ${chain} · SCORE ${score}/100`
+}
+
+function buildRewriteLabel(quote: any, report: any): string {
+  const protocols = (quote.route ?? []).map((s: any) => s.protocol.toUpperCase())
+  const score     = report?.score ?? '?'
+  const chain     = protocols.length ? protocols.join(' → ') : 'OPTIMIZED ROUTE'
+  return `· REWRITE · ${chain} · SCORE ${score}/100`
+}
+
 /* ─── Sub-components ─────────────────────────────────────────────────────── */
 
 function Spinner({ size = 4 }: { size?: number }) {
@@ -72,10 +99,10 @@ function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
   return (
     <div className="msg-in flex flex-col gap-2 max-w-full">
       {/* Label row */}
-      <div className="flex items-center gap-2 pl-0.5">
+      <div className="flex items-center gap-2 pl-0.5 flex-wrap">
         <span className="text-[11px] font-bold text-purple-400 font-mono tracking-widest">⚡ VEKTOR</span>
         {msg.actionLabel && (
-          <span className="text-[10px] text-slate-600 uppercase tracking-widest font-mono">
+          <span className="text-[10px] text-purple-400 uppercase tracking-widest font-mono opacity-80">
             {msg.actionLabel}
           </span>
         )}
@@ -191,15 +218,12 @@ export default function App() {
       const json = await res.json()
       if (!json.ok) throw new Error(json.error ?? 'Unknown error')
 
-      const routeLabel    = (json.quote?.routeLabel ?? 'BEST ROUTE').toUpperCase()
-      const guardianLevel = json.report?.level ?? 'LOW'
-
       setMessages(prev => prev.map(m =>
         m.id === vektorMsgId
           ? {
               ...m,
               loading:      false,
-              actionLabel:  `· ROUTING · ${routeLabel} · GUARDIAN ${guardianLevel}`,
+              actionLabel:  buildLabel(json.quote, json.report),
               originalText: trimmed,
               guardData:    {
                 parsedIntent: json.parsedIntent,
@@ -239,14 +263,12 @@ export default function App() {
       const json = await res.json()
       if (!json.ok) throw new Error(json.error)
 
-      const newLevel = json.report?.level ?? 'LOW'
-
       setMessages(prev => prev.map(m =>
         m.id === msgId
           ? {
               ...m,
               phase:       'rewritten' as const,
-              actionLabel: `· REWRITE · PTB OPTIMIZED · GUARDIAN ${newLevel}`,
+              actionLabel: buildRewriteLabel(json.quote, json.report),
               guardData:   {
                 ...m.guardData!,
                 quote:      json.quote,
@@ -267,7 +289,7 @@ export default function App() {
   function handleConfirm(msgId: string) {
     setMessages(prev => prev.map(m =>
       m.id === msgId
-        ? { ...m, phase: 'confirmed' as const, actionLabel: '· CONFIRMED · READY TO EXECUTE' }
+        ? { ...m, phase: 'confirmed' as const, actionLabel: '· EXECUTE · MAINNET' }
         : m,
     ))
   }
@@ -398,7 +420,7 @@ export default function App() {
                   }
                 }}
                 disabled={!account}
-                placeholder="Ask Vektor anything about your money..."
+                placeholder={PLACEHOLDER}
                 rows={1}
                 className="flex-1 bg-transparent resize-none text-sm text-white placeholder:text-slate-600 focus:outline-none leading-relaxed"
                 style={{ maxHeight: '120px' }}
