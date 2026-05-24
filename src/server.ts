@@ -11,7 +11,7 @@ import 'dotenv/config'
 import express          from 'express'
 import cors             from 'cors'
 import Routex           from 'routex-sui'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { complete, activeProvider } from './ai/client.js'
 
 import { parseIntent }          from './parser/intent.js'
 import { runGuardian }          from './guardian/v2.js'
@@ -37,7 +37,6 @@ import { startAlertMonitor, registerWallet }     from './alerts/monitor.js'
 
 const app    = express()
 const PORT   = 3001
-const genAI  = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
 
 const SIM_ADDR = '0x0000000000000000000000000000000000000000000000000000000000000001'
 
@@ -434,12 +433,12 @@ app.post('/api/intent', async (req, res) => {
 
     if (!parsed.input_asset || !parsed.output_goal || !parsed.input_amount) {
       // Conversational fallback — ask Claude to respond naturally
-      const mem    = sender !== SIM_ADDR ? buildMemoryContext(sender) : ''
-      const model  = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
-      const reply  = await model.generateContent(
-        `You are Vektor, a DeFi financial OS for Sui. Be concise and helpful. ${mem}\n\nUser: ${text}`
-      )
-      const msg    = reply.response.text().trim() || 'How can I help?'
+      const mem  = sender !== SIM_ADDR ? buildMemoryContext(sender) : ''
+      const msg  = (await complete({
+        system:    `You are Vektor, a DeFi financial OS for Sui. Be concise and helpful. ${mem}`,
+        prompt:    text,
+        maxTokens: 300,
+      })).trim() || 'How can I help?'
       res.json({ ok: true, intent_type: 'general', parsedIntent: parsed, message: msg, actionLabel: '· VEKTOR' })
       return
     }
@@ -617,7 +616,12 @@ app.get('/api/health', (_, res) => {
 app.listen(PORT, () => {
   console.log(`\n  ⚡ Vektor OS  →  http://localhost:${PORT}`)
   console.log(`  Features    →  Guardian · NAVI · DCA · Conditions · Memory · Alerts`)
-  console.log(`  Parser      →  Claude API (claude-sonnet-4)\n`)
+  try {
+    const p = activeProvider()
+    console.log(`  AI parser   →  ${p === 'anthropic' ? 'Claude (claude-sonnet-4)' : 'Gemini (gemini-2.0-flash)'}\n`)
+  } catch {
+    console.log(`  AI parser   →  ⚠️  No API key set (ANTHROPIC_API_KEY or GEMINI_API_KEY)\n`)
+  }
 
   startScheduler()
   startConditionMonitor()

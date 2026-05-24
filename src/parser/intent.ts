@@ -1,9 +1,7 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { complete }       from '../ai/client.js'
 import type { ParsedIntent } from './types.js'
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? '')
-
-const SYSTEM_PROMPT = `You are an intent parser for Vektor — a full financial OS for Sui blockchain.
+const SYSTEM = `You are an intent parser for Vektor — a full financial OS for Sui blockchain.
 Return ONLY valid JSON. No preamble. No explanation. No markdown.
 
 Known protocols: NAVI, Scallop, Cetus, Aftermath, DeepBook, Turbos, Bluefin
@@ -81,13 +79,13 @@ Return exactly this JSON shape:
 }`
 
 export async function parseIntent(userInput: string, walletContext?: string): Promise<ParsedIntent> {
-  const model  = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
-  const prompt = walletContext
-    ? `${SYSTEM_PROMPT}\n\nUser wallet context:\n${walletContext}\n\nUser input: ${userInput}`
-    : `${SYSTEM_PROMPT}\n\nUser input: ${userInput}`
-
-  const result = await model.generateContent(prompt)
-  const text   = result.response.text()
+  const text = await complete({
+    system:    SYSTEM,
+    prompt:    walletContext
+                 ? `User wallet context:\n${walletContext}\n\nUser input: ${userInput}`
+                 : userInput,
+    maxTokens: 1024,
+  })
   const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
   return JSON.parse(cleaned) as ParsedIntent
 }
