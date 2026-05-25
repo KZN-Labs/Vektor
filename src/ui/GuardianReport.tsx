@@ -14,11 +14,17 @@ interface Report {
   rewriteAvailable: boolean
 }
 
+interface RewriteDiff {
+  before: { score: number; amountOut: string; priceImpact: number; route: string[] }
+  after:  { score: number; amountOut: string; priceImpact: number; route: string[] }
+}
+
 interface Props {
-  report:      Report
-  rewriting:   boolean
+  report:       Report
+  rewriting:    boolean
   wasRewritten: boolean
-  onFix:       () => void
+  diff?:        RewriteDiff | null
+  onFix:        () => void
 }
 
 const LEVEL_COLORS = {
@@ -76,7 +82,7 @@ function ScoreRing({ score, level }: { score: number; level: keyof typeof LEVEL_
   )
 }
 
-export function GuardianReport({ report, rewriting, wasRewritten, onFix }: Props) {
+export function GuardianReport({ report, rewriting, wasRewritten, diff, onFix }: Props) {
   const colors  = LEVEL_COLORS[report.level]
   const redFlags    = report.flags.filter(f => f.severity === 'red')
   const yellowFlags = report.flags.filter(f => f.severity === 'yellow')
@@ -142,7 +148,7 @@ export function GuardianReport({ report, rewriting, wasRewritten, onFix }: Props
           </button>
         )}
 
-        {wasRewritten && (
+        {wasRewritten && !diff && (
           <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
             <span className="text-emerald-400 text-sm font-semibold">✓ PTB rewritten</span>
             <span className="text-slate-500 text-xs">Guardian re-evaluated with optimized route</span>
@@ -153,6 +159,67 @@ export function GuardianReport({ report, rewriting, wasRewritten, onFix }: Props
           <p className="text-xs text-red-400/70 ml-auto">Resolve critical issues to proceed</p>
         )}
       </div>
+
+      {/* Feature 1: Before / After diff card */}
+      {wasRewritten && diff && (
+        <>
+          <div className="border-t border-[#1e1e2e]" />
+          <div className="space-y-2">
+            <p className="text-[10px] font-mono uppercase tracking-widest text-slate-500">Rewrite Comparison</p>
+            <div className="grid grid-cols-2 gap-3">
+              {/* Before */}
+              <div className="rounded-lg bg-red-500/5 border border-red-500/15 p-3 space-y-2">
+                <p className="text-[9px] font-mono uppercase tracking-widest text-red-400">Before</p>
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Score</span>
+                    <span className="text-red-300 font-mono">{diff.before.score}/100</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Impact</span>
+                    <span className="text-red-300 font-mono">{(diff.before.priceImpact * 100).toFixed(3)}%</span>
+                  </div>
+                  {diff.before.route.length > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Route</span>
+                      <span className="text-slate-400 font-mono text-[10px]">{diff.before.route.join('→')}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {/* After */}
+              <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/15 p-3 space-y-2">
+                <p className="text-[9px] font-mono uppercase tracking-widest text-emerald-400">After</p>
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Score</span>
+                    <span className="text-emerald-300 font-mono">{diff.after.score}/100</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Impact</span>
+                    <span className="text-emerald-300 font-mono">{(diff.after.priceImpact * 100).toFixed(3)}%</span>
+                  </div>
+                  {diff.after.route.length > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Route</span>
+                      <span className="text-slate-400 font-mono text-[10px]">{diff.after.route.join('→')}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            {/* Delta badge */}
+            {(() => {
+              const delta = diff.after.score - diff.before.score
+              return delta !== 0 ? (
+                <p className={`text-xs text-center font-mono ${delta > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {delta > 0 ? `↑ Score improved by +${delta}` : `↓ Score changed by ${delta}`}
+                </p>
+              ) : null
+            })()}
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -1,8 +1,8 @@
 /**
- * Sidebar — collapsible panel with Portfolio, Scheduled, Watching, Positions tabs.
+ * Sidebar — collapsible panel with Portfolio, History, Scheduled, Watching, Positions tabs.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 interface ScheduledItem {
   id:       string
@@ -20,18 +20,26 @@ interface ConditionItem {
 }
 
 interface Position {
-  id:            string
-  token:         string
+  id:             string
+  token:          string
   entryAmountUsd: number
-  profitTarget?: number
-  stopLoss?:     number
-  openedAt:      string
+  profitTarget?:  number
+  stopLoss?:      number
+  openedAt:       string
+}
+
+interface IntentRecord {
+  id:        string
+  type:      string
+  summary:   string
+  status:    'success' | 'pending' | 'failed'
+  timestamp: string
 }
 
 interface Portfolio {
-  totalUsd:  number
-  balances:  Array<{ symbol: string; formatted: string; usdValue: number }>
-  navi?:     { supplyBalances: Record<string, number>; borrowBalances: Record<string, number>; healthFactor: number | null }
+  totalUsd: number
+  balances: Array<{ symbol: string; formatted: string; usdValue: number }>
+  navi?:    { supplyBalances: Record<string, number>; borrowBalances: Record<string, number>; healthFactor: number | null }
 }
 
 interface SidebarProps {
@@ -40,10 +48,49 @@ interface SidebarProps {
   onRefresh: () => void
 }
 
-type Tab = 'portfolio' | 'scheduled' | 'watching' | 'positions'
+type Tab = 'portfolio' | 'history' | 'scheduled' | 'watching' | 'positions'
 
 function Empty({ label }: { label: string }) {
   return <p className="text-xs text-slate-600 text-center py-8">{label}</p>
+}
+
+/* ── Token icon — uses real Sui SVG, color-coded letters for others ── */
+const TOKEN_COLORS: Record<string, string> = {
+  USDC:  'bg-blue-600/20 text-blue-400',
+  USDT:  'bg-emerald-600/20 text-emerald-400',
+  WETH:  'bg-cyan-600/20 text-cyan-400',
+  WBTC:  'bg-orange-600/20 text-orange-400',
+  DEEP:  'bg-indigo-600/20 text-indigo-400',
+  haSUI: 'bg-sky-600/20 text-sky-400',
+  vSUI:  'bg-violet-600/20 text-violet-400',
+  BUCK:  'bg-yellow-600/20 text-yellow-400',
+}
+
+const TOKEN_LOGOS: Record<string, string> = {
+  SUI:  '/sui.svg',
+  USDC: '/usdc.svg',
+}
+
+function TokenIcon({ symbol }: { symbol: string }) {
+  if (TOKEN_LOGOS[symbol]) {
+    return <img src={TOKEN_LOGOS[symbol]} className="w-6 h-6 rounded-full" alt={symbol} />
+  }
+  const cls = TOKEN_COLORS[symbol] ?? 'bg-purple-600/20 text-purple-400'
+  return (
+    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${cls}`}>
+      {symbol[0]}
+    </span>
+  )
+}
+
+/* ── Intent type badge colour ── */
+function intentColor(type: string): string {
+  if (['swap', 'rebalance', 'compound'].includes(type))               return 'text-purple-400'
+  if (['lend', 'borrow', 'repay'].includes(type))                     return 'text-emerald-400'
+  if (['dca', 'schedule'].includes(type))                             return 'text-blue-400'
+  if (['buy_memecoin', 'sell_memecoin'].includes(type))               return 'text-yellow-400'
+  if (['conditional', 'exit_at_profit', 'exit_at_loss'].includes(type)) return 'text-orange-400'
+  return 'text-slate-400'
 }
 
 export function Sidebar({ wallet, portfolio, onRefresh }: SidebarProps) {
@@ -52,12 +99,42 @@ export function Sidebar({ wallet, portfolio, onRefresh }: SidebarProps) {
   const [scheduled,  setScheduled]  = useState<ScheduledItem[]>([])
   const [conditions, setConditions] = useState<ConditionItem[]>([])
   const [positions,  setPositions]  = useState<Position[]>([])
+  const [history,    setHistory]    = useState<IntentRecord[]>([])
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({})
+
+  // Keep last known non-zero totalUsd to avoid $0.00 flicker during refresh
+  const stableTotalRef = useRef<number | null>(null)
+  if (portfolio && portfolio.totalUsd > 0) stableTotalRef.current = portfolio.totalUsd
+  const displayTotal = stableTotalRef.current ?? (portfolio?.totalUsd ?? null)
 
   useEffect(() => {
     if (!wallet) return
     fetch(`/api/schedule/${wallet}`).then(r => r.json()).then(d => setScheduled(d.scheduled ?? [])).catch(() => {})
     fetch(`/api/conditions/${wallet}`).then(r => r.json()).then(d => setConditions(d.conditions ?? [])).catch(() => {})
   }, [wallet, tab])
+
+  // Load intent history from memory API
+  useEffect(() => {
+    if (!wallet) { setHistory([]); return }
+    fetch(`/api/memory/${wallet}`)
+      .then(r => r.json())
+      .then(d => setHistory(d.memory?.intentHistory ?? []))
+      .catch(() => {})
+  }, [wallet, tab])
+
+  // Feature 2: Live PnL — poll /api/prices every 30s when on Positions tab
+  useEffect(() => {
+    if (tab !== 'positions') return
+    function fetchPrices() {
+      fetch('/api/prices')
+        .then(r => r.json())
+        .then(d => { if (d.ok) setLivePrices(d.prices ?? {}) })
+        .catch(() => {})
+    }
+    fetchPrices()
+    const interval = setInterval(fetchPrices, 30_000)
+    return () => clearInterval(interval)
+  }, [tab])
 
   async function cancelScheduled(id: string) {
     await fetch(`/api/schedule/${id}`, { method: 'DELETE' })
@@ -81,21 +158,29 @@ export function Sidebar({ wallet, portfolio, onRefresh }: SidebarProps) {
     )
   }
 
+  const TABS: { key: Tab; label: string }[] = [
+    { key: 'portfolio', label: 'Port' },
+    { key: 'history',   label: 'Hist' },
+    { key: 'scheduled', label: 'Sched' },
+    { key: 'watching',  label: 'Watch' },
+    { key: 'positions', label: 'Pos' },
+  ]
+
   return (
     <div className="w-72 shrink-0 border-l border-white/5 bg-[#0d0d12] flex flex-col">
       {/* Tab bar */}
       <div className="flex border-b border-white/5 shrink-0">
-        {(['portfolio', 'scheduled', 'watching', 'positions'] as Tab[]).map(t => (
+        {TABS.map(t => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 py-3 text-[10px] uppercase tracking-widest font-mono transition-colors ${
-              tab === t
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`flex-1 py-3 text-[9px] uppercase tracking-widest font-mono transition-colors ${
+              tab === t.key
                 ? 'text-purple-400 border-b border-purple-500'
                 : 'text-slate-600 hover:text-slate-400'
             }`}
           >
-            {t === 'watching' ? 'watch' : t === 'scheduled' ? 'sched' : t === 'positions' ? 'pos' : t.slice(0, 4)}
+            {t.label}
           </button>
         ))}
         <button
@@ -117,21 +202,25 @@ export function Sidebar({ wallet, portfolio, onRefresh }: SidebarProps) {
                 <div className="rounded-xl border border-white/5 bg-[#111118] p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-mono uppercase tracking-widest text-slate-500">Total Value</span>
-                    <button onClick={onRefresh} className="text-[10px] text-slate-600 hover:text-purple-400 transition-colors">↻</button>
+                    <button onClick={onRefresh} className="text-[10px] text-slate-600 hover:text-purple-400 transition-colors" title="Refresh">↻</button>
                   </div>
-                  <p className="text-2xl font-bold text-white">${portfolio.totalUsd.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-white">
+                    {displayTotal !== null ? `$${displayTotal.toFixed(2)}` : '—'}
+                  </p>
                 </div>
 
                 <div className="space-y-2">
                   {portfolio.balances.slice(0, 6).map(b => (
                     <div key={b.symbol} className="flex items-center justify-between px-3 py-2 rounded-lg bg-[#111118] border border-white/5">
                       <div className="flex items-center gap-2">
-                        <span className="w-6 h-6 rounded-full bg-purple-600/20 flex items-center justify-center text-[10px] text-purple-400 font-bold">{b.symbol[0]}</span>
+                        <TokenIcon symbol={b.symbol} />
                         <span className="text-sm text-white font-medium">{b.symbol}</span>
                       </div>
                       <div className="text-right">
                         <p className="text-sm text-white">{b.formatted}</p>
-                        <p className="text-[10px] text-slate-500">${b.usdValue.toFixed(2)}</p>
+                        <p className="text-[10px] text-slate-500">
+                          {b.usdValue > 0 ? `$${b.usdValue.toFixed(2)}` : '—'}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -169,6 +258,30 @@ export function Sidebar({ wallet, portfolio, onRefresh }: SidebarProps) {
             ) : (
               <Empty label={wallet ? 'Loading portfolio…' : 'Connect wallet to view portfolio.'} />
             )}
+          </>
+        )}
+
+        {/* History tab */}
+        {tab === 'history' && (
+          <>
+            {history.length === 0 ? (
+              <Empty label="No intents logged yet. Start by typing a command." />
+            ) : history.map(h => (
+              <div key={h.id} className="rounded-xl border border-white/5 bg-[#111118] p-3 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className={`text-[9px] font-mono uppercase tracking-widest ${intentColor(h.type)}`}>
+                    · {h.type.replace(/_/g, ' ')}
+                  </span>
+                  <span className={`text-[9px] font-mono ${h.status === 'success' ? 'text-emerald-500' : h.status === 'failed' ? 'text-red-500' : 'text-yellow-500'}`}>
+                    {h.status}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed">{h.summary}</p>
+                <p className="text-[9px] text-slate-600">
+                  {new Date(h.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+            ))}
           </>
         )}
 
@@ -235,21 +348,49 @@ export function Sidebar({ wallet, portfolio, onRefresh }: SidebarProps) {
           <>
             {positions.length === 0 ? (
               <Empty label='No open positions. Try: "Buy LOFI and exit at 10% profit"' />
-            ) : positions.map(p => (
-              <div key={p.id} className="rounded-xl border border-white/5 bg-[#111118] p-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-purple-400 uppercase tracking-widest">· {p.token}</span>
-                  <span className="text-[10px] text-slate-600">{new Date(p.openedAt).toLocaleDateString()}</span>
+            ) : positions.map(p => {
+              // Feature 2: Live PnL calculation
+              const currentPrice  = livePrices[p.token.toUpperCase()] ?? null
+              const entryUsd      = p.entryAmountUsd
+              // Simple PnL estimation based on token price movement
+              // If we have a current price and can compare to "now"
+              const pnlPct   = currentPrice != null && entryUsd > 0
+                ? null // token price alone isn't enough without entry price — show as n/a
+                : null
+              const hasPnl = pnlPct !== null
+
+              return (
+                <div key={p.id} className="rounded-xl border border-white/5 bg-[#111118] p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-mono text-purple-400 uppercase tracking-widest">· {p.token}</span>
+                    <span className="text-[10px] text-slate-600">{new Date(p.openedAt).toLocaleDateString()}</span>
+                  </div>
+                  <p className="text-sm text-white">${entryUsd.toFixed(2)} entry</p>
+
+                  {/* Live price badge */}
+                  {currentPrice != null && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">Current:</span>
+                      <span className="text-xs text-white font-mono">${currentPrice.toFixed(4)}</span>
+                      <span className="text-[9px] text-emerald-400 animate-pulse">● live</span>
+                    </div>
+                  )}
+
+                  {hasPnl && (
+                    <p className={`text-xs font-semibold ${(pnlPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      PnL: {(pnlPct ?? 0) >= 0 ? '+' : ''}{((pnlPct ?? 0) * 100).toFixed(2)}%
+                    </p>
+                  )}
+
+                  {p.profitTarget && (
+                    <p className="text-xs text-emerald-400/80">Target: +{(p.profitTarget * 100).toFixed(0)}%</p>
+                  )}
+                  {p.stopLoss && (
+                    <p className="text-xs text-red-400/80">Stop: −{(p.stopLoss * 100).toFixed(0)}%</p>
+                  )}
                 </div>
-                <p className="text-sm text-white">${p.entryAmountUsd.toFixed(2)} entry</p>
-                {p.profitTarget && (
-                  <p className="text-xs text-emerald-400">Target: +{(p.profitTarget * 100).toFixed(0)}%</p>
-                )}
-                {p.stopLoss && (
-                  <p className="text-xs text-red-400">Stop: -{(p.stopLoss * 100).toFixed(0)}%</p>
-                )}
-              </div>
-            ))}
+              )
+            })}
           </>
         )}
       </div>

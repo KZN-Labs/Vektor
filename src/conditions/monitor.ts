@@ -1,12 +1,14 @@
 /**
  * Condition monitor — polls Pyth price feeds every 30 seconds.
- * When a condition is met, emits an event and updates user alerts.
+ * When a condition is met:
+ *   • If SUI_PRIVATE_KEY is set → auto-executes the swap server-side
+ *   • Otherwise → sends an actionable alert with the current price
  */
 
-import { EventEmitter } from 'events'
+import { EventEmitter }          from 'events'
 import { PriceServiceConnection } from '@pythnetwork/price-service-client'
 import { getAllConditions, markConditionFired, type Condition } from '../db/store.js'
-import { addAlert } from '../memory/index.js'
+import { addAlert }               from '../memory/index.js'
 
 export const conditionEvents = new EventEmitter()
 
@@ -47,12 +49,85 @@ function checkCondition(cond: Condition, prices: Record<string, number>): boolea
 
   if (type === 'price_below') return price < threshold
   if (type === 'price_above') return price > threshold
-  // health_factor_below is checked separately
   return false
 }
 
 export function getCurrentPrice(symbol: string): number | null {
   return priceCache[symbol.toUpperCase()] ?? null
+}
+
+/** Returns the full price cache — used by /api/prices endpoint */
+export function getAllPrices(): Record<string, number> {
+  return { ...priceCache }
+}
+
+const TOKEN_DECIMALS: Record<string, number> = {
+  SUI: 1e9, USDC: 1e6, USDT: 1e6, DEEP: 1e6, WETH: 1e8, WBTC: 1e8, BUCK: 1e9,
+}
+
+/** Try to auto-execute a condition's action server-side using the wallet keypair */
+async function tryAutoExecute(cond: Condition, currentPrice: number): Promise<void> {
+  const privateKey = process.env.SUI_PRIVATE_KEY
+  if (!privateKey) {
+    // No key — send a rich actionable alert
+    const dir = cond.trigger.type === 'price_below' ? 'dropped below' : 'rose above'
+    addAlert(cond.wallet, {
+      type:     'condition',
+      message:  `⚡ Condition triggered: ${cond.trigger.asset} has ${dir} $${cond.trigger.threshold}. Current price: $${currentPrice.toFixed(4)}. Open Vektor to execute.`,
+      severity: 'warning',
+    })
+    return
+  }
+
+  try {
+    // Dynamic import so the module loads fine even if @mysten/sui isn't used elsewhere
+    const [{ Ed25519Keypair }, { decodeSuiPrivateKey }, { SuiClient, getFullnodeUrl }] = await Promise.all([
+      import('@mysten/sui/keypairs/ed25519'),
+      import('@mysten/sui/cryptography'),
+      import('@mysten/sui/client'),
+    ])
+
+    const { secretKey } = decodeSuiPrivateKey(privateKey)
+    const keypair       = Ed25519Keypair.fromSecretKey(secretKey)
+    const wallet        = keypair.getPublicKey().toSuiAddress()
+
+    const parsed    = cond.action
+    const fromToken = (parsed.input_asset ?? 'SUI').toUpperCase()
+    const toToken   = (parsed.output_goal ?? 'USDC').toUpperCase()
+    const amount    = parsed.input_amount ?? 0
+    const amountIn  = BigInt(Math.round(amount * (TOKEN_DECIMALS[fromToken] ?? 1e9)))
+
+    const { default: Routex } = await import('routex-sui')
+    const routex = new Routex('mainnet', wallet)
+    const quote  = await routex.getQuote({
+      from:              fromToken,
+      to:                toToken,
+      amount:            amountIn,
+      slippageTolerance: 0.005,
+      senderAddress:     wallet,
+    })
+
+    const suiClient = new SuiClient({ url: getFullnodeUrl('mainnet') })
+    const result    = await suiClient.signAndExecuteTransaction({
+      signer:      keypair,
+      transaction: quote.ptb,
+      options:     { showEffects: true },
+    })
+
+    addAlert(cond.wallet, {
+      type:     'condition',
+      message:  `✓ Auto-executed: ${amount} ${fromToken} → ${toToken} at $${currentPrice.toFixed(4)}. TX: ${result.digest.slice(0, 12)}…${result.digest.slice(-6)}`,
+      severity: 'info',
+    })
+    conditionEvents.emit('executed', { condition: cond, digest: result.digest, currentPrice })
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    addAlert(cond.wallet, {
+      type:     'condition',
+      message:  `⚠️ Condition triggered (${cond.trigger.asset} @ $${currentPrice.toFixed(4)}) but auto-execute failed: ${errMsg.slice(0, 120)}`,
+      severity: 'warning',
+    })
+  }
 }
 
 export function startConditionMonitor() {
@@ -63,23 +138,17 @@ export function startConditionMonitor() {
     const conditions = getAllConditions()
 
     for (const cond of conditions) {
-      const triggered = checkCondition(cond, priceCache)
-      if (!triggered) continue
+      if (!checkCondition(cond, priceCache)) continue
 
       markConditionFired(cond.id)
 
-      const price = priceCache[cond.trigger.asset.toUpperCase()]
-      addAlert(cond.wallet, {
-        type:     'condition',
-        message:  `Condition triggered: ${cond.description}. ${cond.trigger.asset} is now $${price?.toFixed(4) ?? '?'}`,
-        severity: 'warning',
-      })
-
+      const price = priceCache[cond.trigger.asset.toUpperCase()] ?? 0
       conditionEvents.emit('triggered', { condition: cond, currentPrice: price })
+
+      await tryAutoExecute(cond, price)
     }
   }
 
-  // Run immediately, then every 30 seconds
   tick().catch(() => {})
   setInterval(() => tick().catch(() => {}), 30_000)
 }

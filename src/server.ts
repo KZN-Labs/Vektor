@@ -8,6 +8,8 @@
  */
 
 import 'dotenv/config'
+import fs               from 'fs'
+import path             from 'path'
 import express          from 'express'
 import cors             from 'cors'
 import Routex           from 'routex-sui'
@@ -20,7 +22,7 @@ import { fetchPortfolio, fetchTransaction } from './portfolio/fetcher.js'
 import { getHealthFactor, getNaviPositions, getPoolRates,
          buildDepositPTB, buildBorrowPTB, buildRepayPTB } from './navi/client.js'
 import { explainTransaction }   from './explainer/index.js'
-import { createPaymentRequest, getPaymentStatus } from './payments/index.js'
+import { createPaymentRequest, getPaymentStatus, fulfillPayment } from './payments/index.js'
 import {
   addScheduled, getScheduled, cancelScheduled,
   addCondition, getConditions, cancelCondition,
@@ -29,14 +31,36 @@ import {
 import {
   getMemory, saveMemory, buildMemoryContext,
   getUnseenAlerts, markAlertsSeen, updatePortfolioSnapshot,
-  addAlert, incrementIntentCount,
+  addAlert, incrementIntentCount, logIntent,
 } from './memory/index.js'
 import { startScheduler }        from './scheduler/worker.js'
-import { startConditionMonitor, getCurrentPrice } from './conditions/monitor.js'
+import { startConditionMonitor, getCurrentPrice, getAllPrices } from './conditions/monitor.js'
 import { startAlertMonitor, registerWallet }     from './alerts/monitor.js'
+
+/* ─── VektorRegistry — local JSON counter ────────────────────────────────── */
+
+const REGISTRY_FILE = path.resolve(process.cwd(), 'data/registry.json')
+
+interface Registry { total_transactions: number; total_rewrites: number; last_updated: string }
+function loadRegistry(): Registry {
+  try { return JSON.parse(fs.readFileSync(REGISTRY_FILE, 'utf8')) }
+  catch { return { total_transactions: 0, total_rewrites: 0, last_updated: new Date().toISOString() } }
+}
+function saveRegistry(r: Registry): void {
+  fs.mkdirSync(path.dirname(REGISTRY_FILE), { recursive: true })
+  fs.writeFileSync(REGISTRY_FILE, JSON.stringify({ ...r, last_updated: new Date().toISOString() }, null, 2))
+}
+function bumpRegistry(field: 'total_transactions' | 'total_rewrites'): void {
+  const r = loadRegistry(); r[field]++; saveRegistry(r)
+}
 
 const app    = express()
 const PORT   = 3001
+
+// Serialize BigInt values as strings so res.json() never throws
+app.set('json replacer', (_key: string, val: unknown) =>
+  typeof val === 'bigint' ? val.toString() : val
+)
 
 const SIM_ADDR = '0x0000000000000000000000000000000000000000000000000000000000000001'
 
@@ -73,7 +97,7 @@ function serializeQuote(quote: any, from: string, to: string) {
       amountIn: amountIn.toString(), amountOut: amountOut.toString(),
       priceImpact: quote.priceImpact ?? 0, gasEstimate: gas.toString(),
       slippageTolerance: quote.slippageTolerance ?? 0.005,
-      validUntil: quote.validUntil, route: quote.route ?? [],
+      validUntil: quote.validUntil,
       fromSymbol: from, toSymbol: to,
     },
   }
@@ -129,6 +153,10 @@ app.post('/api/intent', async (req, res) => {
     if (sender !== SIM_ADDR) {
       registerWallet(sender)
       incrementIntentCount(sender)
+      logIntent(sender, { type: intent, summary: text.slice(0, 120), status: 'success' })
+      // Bump registry on swap/memecoin types
+      const swapTypes = ['swap', 'compound', 'rebalance', 'buy_memecoin', 'sell_memecoin', 'exit_at_profit', 'exit_at_loss']
+      if (swapTypes.includes(intent)) bumpRegistry('total_transactions')
     }
 
     /* ── READ-ONLY intents ────────────────────────────────────────── */
@@ -405,6 +433,7 @@ app.post('/api/intent', async (req, res) => {
         quote:    serializeQuote(quoteWithSym, fromToken, memeToken),
         report:   serializeReport(report),
         _rawReport: report,
+        quoteParams: { from: fromToken, to: memeToken, amountIn: toBaseUnits(amount, fromToken).toString(), slippage: parsed.constraints.max_slippage ?? 0.005, sender },
         message:  `Routing ${amount} ${fromToken} into ${memeToken}. Guardian flagged: ${report.flags.filter(f=>f.severity!=='green').map(f=>f.title).join(', ') || 'all clear'}.`,
         actionLabel: label,
       })
@@ -466,6 +495,14 @@ app.post('/api/intent', async (req, res) => {
       quote:    serializeQuote(quoteWithSym, fromToken, toToken),
       report:   serializeReport(report),
       _rawReport: report,
+      // Store params so client can request a fresh PTB at execution time
+      quoteParams: {
+        from:      fromToken,
+        to:        toToken,
+        amountIn:  amountIn.toString(),
+        slippage:  parsed.constraints.max_slippage ?? 0.005,
+        sender,
+      },
       actionLabel: (() => {
         const protocols = (quote.route ?? []).map((s: any) => s.protocol.toUpperCase())
         const chain = protocols.length
@@ -499,14 +536,36 @@ app.post('/api/rewrite', async (req, res) => {
     const sender = senderAddress || SIM_ADDR
     if (!rawReport) { res.status(400).json({ ok: false, error: 'rawReport is required' }); return }
     const rewritten = await rewritePTB(rawReport, sender, 'mainnet')
-    const q   = rewritten.rewrittenQuote ?? rewritten.originalQuote
+    const q    = rewritten.rewrittenQuote ?? rewritten.originalQuote
     const from = q.fromSymbol ?? rawReport.originalQuote?.fromSymbol ?? 'SUI'
     const to   = q.toSymbol   ?? rawReport.originalQuote?.toSymbol   ?? 'USDC'
+
+    // Bump registry
+    bumpRegistry('total_rewrites')
+
+    // Build before/after diff for the UI
+    const origQ = rawReport.originalQuote ?? {}
+    const diff  = {
+      before: {
+        score:      rawReport.score ?? 0,
+        amountOut:  origQ.amountOut  ?? '0',
+        priceImpact: origQ.priceImpact ?? 0,
+        route:      (origQ.route ?? []).map((s: any) => s.protocol),
+      },
+      after: {
+        score:      rewritten.score ?? 0,
+        amountOut:  q.amountOut  ?? '0',
+        priceImpact: q.priceImpact ?? 0,
+        route:      (q.route ?? []).map((s: any) => s.protocol),
+      },
+    }
+
     res.json({
       ok: true,
       quote:      serializeQuote({ ...q, fromSymbol: from, toSymbol: to }, from, to),
       report:     serializeReport(rewritten),
       _rawReport: rewritten,
+      diff,
     })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) })
@@ -555,7 +614,20 @@ app.post('/api/portfolio', async (req, res) => {
     registerWallet(wallet)
     const portfolio = await fetchPortfolio(wallet)
     updatePortfolioSnapshot(wallet, portfolio)
-    res.json({ ok: true, portfolio })
+
+    // Deep analytics from recent tx history
+    const successTxs = portfolio.recentTxs.filter(t => t.status === 'success')
+    const analytics = {
+      txCount:      portfolio.recentTxs.length,
+      successCount: successTxs.length,
+      failedCount:  portfolio.recentTxs.length - successTxs.length,
+      // Gas: each tx costs ~0.003-0.01 SUI on average; we estimate from tx count
+      estimatedGasSui:  (successTxs.length * 0.005).toFixed(4),
+      // Top balances for quick summary
+      topAssets: portfolio.balances.slice(0, 3).map(b => b.symbol),
+    }
+
+    res.json({ ok: true, portfolio, analytics })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) })
   }
@@ -591,6 +663,65 @@ app.get('/api/payment/:id', (req, res) => {
   res.json({ ok: true, payment })
 })
 
+// Mark a payment as paid (called after the payer's tx is confirmed)
+app.post('/api/payment/:id/pay', (req, res) => {
+  const { paidBy } = req.body as { paidBy?: string }
+  const payment    = getPaymentStatus(req.params.id)
+  if (!payment) { res.status(404).json({ ok: false, error: 'Payment not found' }); return }
+  if (payment.status === 'paid') { res.json({ ok: true, payment }); return }
+  fulfillPayment(req.params.id, paidBy ?? 'unknown')
+  res.json({ ok: true, payment: { ...payment, status: 'paid' } })
+})
+
+/* ─── PTB builder — returns serialized tx bytes for wallet signing ─── */
+
+app.post('/api/ptb', async (req, res) => {
+  try {
+    const { from, to, amountIn, slippage, sender } = req.body
+    if (!from || !to || !amountIn || !sender) {
+      res.status(400).json({ ok: false, error: 'Missing required fields' }); return
+    }
+    const routex = new Routex('mainnet', sender)
+    const quote  = await routex.getQuote({
+      from,
+      to,
+      amount:            BigInt(amountIn),
+      slippageTolerance: slippage ?? 0.005,
+      senderAddress:     sender,
+    })
+
+    // Feature 5: VektorLog — atomically append on-chain log call when package is deployed
+    const logPackageId = process.env.VEKTORLOG_PACKAGE_ID
+    if (logPackageId) {
+      try {
+        const summary = `${from}→${to} ${amountIn}`
+        quote.ptb.moveCall({
+          target:    `${logPackageId}::log::record`,
+          arguments: [quote.ptb.pure.string(summary.slice(0, 64))],
+        })
+      } catch { /* log append failed — still execute the swap */ }
+    }
+
+    const ptbJson = quote.ptb.serialize()
+    res.json({ ok: true, ptbJson })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+/* ─── VektorRegistry stats ────────────────────────────────────────────── */
+
+app.get('/api/stats', (_, res) => {
+  res.json({ ok: true, registry: loadRegistry() })
+})
+
+/* ─── Live prices (from Pyth cache) ──────────────────────────────────── */
+
+app.get('/api/prices', (_, res) => {
+  res.json({ ok: true, prices: getAllPrices() })
+})
+
 /* ─── Alerts ─────────────────────────────────────────────────────────── */
 
 app.get('/api/alerts/:wallet', (req, res) => {
@@ -602,7 +733,30 @@ app.get('/api/alerts/:wallet', (req, res) => {
 /* ─── Memory ─────────────────────────────────────────────────────────── */
 
 app.get('/api/memory/:wallet', (req, res) => {
-  res.json({ ok: true, memory: getMemory(req.params.wallet) })
+  const mem     = getMemory(req.params.wallet)
+  const prices  = getAllPrices()
+  const sched   = getScheduled(req.params.wallet)
+
+  // Build DCA progress summary
+  const dcaItems = sched.filter(s => s.type === 'dca' && s.active)
+  const dcaSummary = dcaItems.map(d => ({
+    token:    `${d.amount} ${d.token} → ${d.targetToken ?? '?'}`,
+    progress: `${d.schedule.completedRuns}/${d.schedule.totalRuns} runs`,
+    nextRun:  d.schedule.nextRun,
+  }))
+
+  // Build price context
+  const priceContext = Object.entries(prices)
+    .filter(([, p]) => p > 0)
+    .slice(0, 5)
+    .reduce((acc, [sym, price]) => ({ ...acc, [sym]: price }), {} as Record<string, number>)
+
+  res.json({
+    ok: true,
+    memory: mem,
+    dcaSummary,
+    priceContext,
+  })
 })
 
 /* ─── Health ─────────────────────────────────────────────────────────── */
@@ -618,9 +772,10 @@ app.listen(PORT, () => {
   console.log(`  Features    →  Guardian · NAVI · DCA · Conditions · Memory · Alerts`)
   try {
     const p = activeProvider()
-    console.log(`  AI parser   →  ${p === 'anthropic' ? 'Claude (claude-sonnet-4)' : 'Gemini (gemini-2.0-flash)'}\n`)
+    const label = p === 'anthropic' ? 'Claude (claude-sonnet-4)' : p === 'groq' ? 'Groq (llama-3.3-70b)' : 'Gemini (gemini-2.0-flash)'
+    console.log(`  AI parser   →  ${label}\n`)
   } catch {
-    console.log(`  AI parser   →  ⚠️  No API key set (ANTHROPIC_API_KEY or GEMINI_API_KEY)\n`)
+    console.log(`  AI parser   →  ⚠️  No API key set (ANTHROPIC_API_KEY, GROQ_API_KEY, or GEMINI_API_KEY)\n`)
   }
 
   startScheduler()
