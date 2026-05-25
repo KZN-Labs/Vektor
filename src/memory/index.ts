@@ -18,9 +18,18 @@ export interface UserAlert {
   createdAt: string
 }
 
+export interface IntentRecord {
+  id:        string
+  type:      string
+  summary:   string
+  status:    'success' | 'pending' | 'failed'
+  timestamp: string
+}
+
 export interface UserMemory {
   wallet:              string
   lastSeen:            string
+  preferredLanguage?:  string   // ISO 639-1 code — set after first detection, persisted across sessions
   preferences: {
     riskTolerance:     'low' | 'medium' | 'high'
     preferredProtocols: string[]
@@ -30,6 +39,7 @@ export interface UserMemory {
   conversationSummary?:   string
   naviHealthFactor?:      number
   pendingAlerts:          UserAlert[]
+  intentHistory:          IntentRecord[]
   stats: {
     totalIntents:    number
     totalSwapVolume: number
@@ -47,13 +57,17 @@ export function getMemory(wallet: string): UserMemory {
   if (!fs.existsSync(p)) {
     return {
       wallet,
-      lastSeen:    new Date().toISOString(),
-      preferences: { riskTolerance: 'medium', preferredProtocols: [], typicalAmounts: {} },
+      lastSeen:      new Date().toISOString(),
+      preferences:   { riskTolerance: 'medium', preferredProtocols: [], typicalAmounts: {} },
       pendingAlerts: [],
-      stats:       { totalIntents: 0, totalSwapVolume: 0, firstSeen: new Date().toISOString() },
+      intentHistory: [],
+      stats:         { totalIntents: 0, totalSwapVolume: 0, firstSeen: new Date().toISOString() },
     }
   }
-  return JSON.parse(fs.readFileSync(p, 'utf8')) as UserMemory
+  const mem = JSON.parse(fs.readFileSync(p, 'utf8')) as UserMemory
+  // backfill field for existing wallets
+  if (!mem.intentHistory) mem.intentHistory = []
+  return mem
 }
 
 export function saveMemory(mem: UserMemory): void {
@@ -99,6 +113,41 @@ export function incrementIntentCount(wallet: string, swapAmountUsd = 0): void {
   const mem = getMemory(wallet)
   mem.stats.totalIntents++
   mem.stats.totalSwapVolume += swapAmountUsd
+  saveMemory(mem)
+}
+
+export function logIntent(
+  wallet: string,
+  record: Omit<IntentRecord, 'id' | 'timestamp'>,
+): void {
+  const mem = getMemory(wallet)
+  mem.intentHistory.unshift({
+    ...record,
+    id:        randomUUID(),
+    timestamp: new Date().toISOString(),
+  })
+  // Keep last 50 intents
+  mem.intentHistory = mem.intentHistory.slice(0, 50)
+  saveMemory(mem)
+}
+
+/**
+ * Get the user's preferred language (stored after first detection).
+ * Returns 'en' if none stored.
+ */
+export function getPreferredLanguage(wallet: string): string {
+  return getMemory(wallet).preferredLanguage ?? 'en'
+}
+
+/**
+ * Persist the detected language for this user.
+ * Only writes if the language changed — avoids unnecessary disk I/O.
+ */
+export function setPreferredLanguage(wallet: string, lang: string): void {
+  if (!lang || lang === 'en') return   // 'en' is the default, no need to persist
+  const mem = getMemory(wallet)
+  if (mem.preferredLanguage === lang) return   // unchanged, skip write
+  mem.preferredLanguage = lang
   saveMemory(mem)
 }
 

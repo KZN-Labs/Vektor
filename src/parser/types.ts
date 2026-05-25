@@ -31,6 +31,7 @@ export interface ScheduleSpec {
 }
 
 export interface ParsedIntent {
+  language:       string          // ISO 639-1 code detected from user input (e.g. "en", "fr", "yo")
   intent_type:    IntentType
   input_asset:    string | null
   input_amount:   number | null

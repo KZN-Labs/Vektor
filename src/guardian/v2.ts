@@ -7,6 +7,7 @@
 
 import { PriceServiceConnection } from '@pythnetwork/price-service-client'
 import { calculateScore, scoreToLevel } from './scorer.js'
+import { complete, LANG_NAMES }      from '../ai/client.js'
 
 export interface RiskFlag {
   class:       1 | 2 | 3 | 4 | 5 | 6 | 7
@@ -191,12 +192,55 @@ function checkGasAnomaly(quote: any): RiskFlag {
     message: `Gas estimate is within expected range for a ${key} swap.` }
 }
 
+// ─── Guardian flag translator ─────────────────────────────────────────────────
+
+/**
+ * Translate Guardian flag titles and messages into the user's language.
+ * Protocol names, token symbols, and percentages are preserved in English.
+ * Runs as a single batched AI call for all flags to minimise latency.
+ */
+async function translateGuardianFlags(flags: RiskFlag[], lang: string): Promise<RiskFlag[]> {
+  // Only translate when the language is not English
+  if (!lang || lang === 'en') return flags
+
+  const langName = LANG_NAMES[lang] ?? lang
+
+  try {
+    const payload = flags.map(f => ({ title: f.title, message: f.message }))
+    const raw = await complete({
+      system: `You are a DeFi risk report translator.
+Translate the following Guardian risk-check entries into ${langName}.
+Rules:
+- Keep ALL protocol names in English: Cetus, Aftermath, NAVI, DeepBook, Turbos, Bluefin, Scallop
+- Keep ALL token symbols in English: SUI, USDC, USDT, WETH, WBTC, DEEP
+- Keep all numbers, percentages, wallet addresses unchanged
+- For Yoruba, Hausa, Igbo, Swahili: DeFi technical terms like "slippage", "liquidity", "oracle", "pool" may stay in English if no natural translation exists
+- Return ONLY a valid JSON array with the same number of items, each with "title" and "message" string fields
+- No preamble, no explanation, no markdown`,
+      prompt:     JSON.stringify(payload),
+      maxTokens:  1200,
+    })
+    const cleaned    = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
+    const translated = JSON.parse(cleaned) as Array<{ title: string; message: string }>
+    if (!Array.isArray(translated) || translated.length !== flags.length) return flags
+    return flags.map((f, i) => ({
+      ...f,
+      title:   translated[i]?.title   ?? f.title,
+      message: translated[i]?.message ?? f.message,
+    }))
+  } catch {
+    // Translation failed — return original English flags rather than crashing
+    return flags
+  }
+}
+
 // ─── Orchestrator ─────────────────────────────────────────────────────────────
 
 export async function runGuardian(
   quote:         any,
   walletAddress: string,
   suiClient:     any,
+  lang           = 'en',
 ): Promise<GuardianReportV2> {
   const results = await Promise.allSettled([
     Promise.resolve(checkSlippage(quote)),
@@ -219,10 +263,13 @@ export async function runGuardian(
   const score = calculateScore(flags)
   const level = scoreToLevel(score)
 
+  // Translate flag messages into user's language (no-op for English)
+  const localizedFlags = await translateGuardianFlags(flags, lang)
+
   return {
     score,
     level,
-    flags,
+    flags:            localizedFlags,
     canProceed:       level !== 'CRITICAL',
     rewriteAvailable: flags.some(f => f.severity !== 'green' && f.suggestion != null),
     originalQuote:    quote,

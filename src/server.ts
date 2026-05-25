@@ -13,7 +13,7 @@ import path             from 'path'
 import express          from 'express'
 import cors             from 'cors'
 import Routex           from 'routex-sui'
-import { complete, activeProvider } from './ai/client.js'
+import { complete, activeProvider, LANG_NAMES, SUPPORTED_LANGS } from './ai/client.js'
 
 import { parseIntent }          from './parser/intent.js'
 import { runGuardian }          from './guardian/v2.js'
@@ -32,6 +32,7 @@ import {
   getMemory, saveMemory, buildMemoryContext,
   getUnseenAlerts, markAlertsSeen, updatePortfolioSnapshot,
   addAlert, incrementIntentCount, logIntent,
+  getPreferredLanguage, setPreferredLanguage,
 } from './memory/index.js'
 import { startScheduler }        from './scheduler/worker.js'
 import { startConditionMonitor, getCurrentPrice, getAllPrices } from './conditions/monitor.js'
@@ -149,11 +150,19 @@ app.post('/api/intent', async (req, res) => {
     const parsed  = await parseIntent(text, memCtx)
     const intent  = parsed.intent_type
 
+    // ── Language detection ───────────────────────────────────────────────
+    // Parser returns detected language. Fall back to stored preference, then 'en'.
+    const rawLang = (parsed as any).language as string | undefined
+    const lang = (rawLang && SUPPORTED_LANGS.has(rawLang)) ? rawLang
+               : (sender !== SIM_ADDR ? getPreferredLanguage(sender) : 'en')
+
     // Register wallet for monitoring
     if (sender !== SIM_ADDR) {
       registerWallet(sender)
       incrementIntentCount(sender)
       logIntent(sender, { type: intent, summary: text.slice(0, 120), status: 'success' })
+      // Persist language preference (only saves if changed)
+      setPreferredLanguage(sender, lang)
       // Bump registry on swap/memecoin types
       const swapTypes = ['swap', 'compound', 'rebalance', 'buy_memecoin', 'sell_memecoin', 'exit_at_profit', 'exit_at_loss']
       if (swapTypes.includes(intent)) bumpRegistry('total_transactions')
@@ -164,27 +173,41 @@ app.post('/api/intent', async (req, res) => {
     if (intent === 'check_balance' || intent === 'analyze_wallet') {
       const portfolio = await fetchPortfolio(sender)
       if (sender !== SIM_ADDR) updatePortfolioSnapshot(sender, portfolio)
-      const totalStr  = `$${portfolio.totalUsd.toFixed(2)}`
-      const assets    = portfolio.balances.slice(0, 5).map(b => `${b.symbol} ${b.formatted}`).join(', ')
+      const totalStr = `$${portfolio.totalUsd.toFixed(2)}`
+      const assets   = portfolio.balances.slice(0, 5).map(b => `${b.symbol} ${b.formatted}`).join(', ')
+
+      // Generate localised portfolio summary
+      const message = await complete({
+        system:    'You are Vektor, a DeFi assistant on Sui. Give a concise 1-2 sentence portfolio summary.',
+        prompt:    `Total value: ${totalStr}. Holdings: ${assets || 'none'}. ${portfolio.navi ? `NAVI health factor: ${portfolio.navi.healthFactor?.toFixed(2) ?? 'n/a'}.` : ''}`,
+        maxTokens: 200,
+        lang,
+      }).catch(() => `Portfolio: ${totalStr} total. Holdings: ${assets || 'none detected'}.`)
+
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        portfolio,
-        message:     `Portfolio: ${totalStr} total. Holdings: ${assets || 'none detected'}.${portfolio.navi ? ` NAVI health: ${portfolio.navi.healthFactor?.toFixed(2) ?? 'n/a'}` : ''}`,
+        portfolio, language: lang,
+        message,
         actionLabel: `· PORTFOLIO · ${totalStr}`,
       })
       return
     }
 
     if (intent === 'check_health_factor') {
-      const hf = await getHealthFactor(sender)
+      const hf    = await getHealthFactor(sender)
       const level = hf === null ? 'unknown' : hf > 2 ? 'safe' : hf > 1.5 ? 'moderate' : hf > 1.3 ? 'warning' : 'danger'
+      const hfMsg = hf === null
+        ? 'No active NAVI borrow positions found, or could not fetch health factor.'
+        : `Your NAVI health factor is ${hf.toFixed(2)} (${level}). Liquidation threshold is 1.0.`
+      const message = lang === 'en' ? hfMsg : await complete({
+        system: 'You are Vektor, a DeFi assistant. Translate the following message exactly.',
+        prompt: hfMsg, maxTokens: 150, lang,
+      }).catch(() => hfMsg)
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        healthFactor: hf,
-        message:      hf === null
-          ? 'No active NAVI borrow positions found, or could not fetch health factor.'
-          : `Your NAVI health factor is ${hf.toFixed(2)} (${level}). Liquidation threshold is 1.0.`,
-        actionLabel:  `· HEALTH FACTOR · ${hf?.toFixed(2) ?? 'N/A'}`,
+        healthFactor: hf, language: lang,
+        message,
+        actionLabel: `· HEALTH FACTOR · ${hf?.toFixed(2) ?? 'N/A'}`,
       })
       return
     }
@@ -198,7 +221,7 @@ app.post('/api/intent', async (req, res) => {
       const memes = positions.status === 'fulfilled' ? positions.value : []
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        naviPositions: navi, memePositions: memes,
+        naviPositions: navi, memePositions: memes, language: lang,
         message: [
           navi.length  ? `NAVI: ${navi.map(p => `${p.supplyBalance.toFixed(2)} ${p.symbol} supplied`).join(', ')}` : '',
           memes.length ? `Open positions: ${memes.map(p => p.token).join(', ')}` : '',
@@ -211,10 +234,10 @@ app.post('/api/intent', async (req, res) => {
 
     if (intent === 'explain_transaction') {
       const input  = parsed.tx_digest ?? text
-      const result = await explainTransaction(input)
+      const result = await explainTransaction(input, lang)
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        explanation: result,
+        explanation: result, language: lang,
         message:     result.explanation,
         actionLabel: `· EXPLAIN · TX ${result.digest.slice(0, 8)}…`,
       })
@@ -243,9 +266,14 @@ app.post('/api/intent', async (req, res) => {
       const token     = (parsed.input_asset ?? 'SUI').toUpperCase()
       const amount    = parsed.input_amount ?? 0
       const recipient = parsed.recipient ?? ''
+      const sendMsgEn = `Ready to send ${amount} ${token} to ${recipient.slice(0, 8)}…${recipient.slice(-4)}. Confirm to proceed.`
+      const sendMsg   = lang === 'en' ? sendMsgEn : await complete({
+        system: 'You are Vektor. Translate this transfer confirmation exactly, keeping the address fragment unchanged.', prompt: sendMsgEn, maxTokens: 100, lang,
+      }).catch(() => sendMsgEn)
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        message:     `Ready to send ${amount} ${token} to ${recipient.slice(0, 8)}…${recipient.slice(-4)}. Confirm to proceed.`,
+        language: lang,
+        message:     sendMsg,
         actionLabel: `· SEND · ${amount} ${token}`,
         ptbType:     'send',
         ptbParams:   { token, amount, recipient },
@@ -264,11 +292,14 @@ app.post('/api/intent', async (req, res) => {
       let ptbB64: string | null = null
       try { ptbB64 = await buildDepositPTB(sender, token, amount) } catch { /* skip if wallet not available */ }
 
+      const lendMsgEn  = `Lending ${amount} ${token} on NAVI.${supplyApy ? ` Current supply APY: ${supplyApy}.` : ''} Guardian will run before execution.`
+      const lendMsg    = lang === 'en' ? lendMsgEn : await complete({
+        system: 'You are Vektor. Translate this DeFi lending confirmation exactly.', prompt: lendMsgEn, maxTokens: 120, lang,
+      }).catch(() => lendMsgEn)
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        poolRates:   rates,
-        ptbB64,
-        message:     `Lending ${amount} ${token} on NAVI.${supplyApy ? ` Current supply APY: ${supplyApy}.` : ''} Guardian will run before execution.`,
+        poolRates: rates, ptbB64, language: lang,
+        message:     lendMsg,
         actionLabel: `· LEND · ${amount} ${token} → NAVI${supplyApy ? ` · ${supplyApy}` : ''}`,
       })
       return
@@ -283,14 +314,16 @@ app.post('/api/intent', async (req, res) => {
       let ptbB64: string | null = null
       try { ptbB64 = await buildBorrowPTB(sender, token, amount) } catch { /* skip */ }
 
+      const borrowMsgEn = safeToBorrow
+        ? `Borrowing ${amount} ${token} from NAVI. Current health factor: ${hf?.toFixed(2) ?? 'n/a'}. Guardian will run before execution.`
+        : `⚠️ Health factor ${hf?.toFixed(2)} is too low to safely borrow. Repay existing debt first.`
+      const borrowMsg = lang === 'en' ? borrowMsgEn : await complete({
+        system: 'You are Vektor. Translate this DeFi borrow status message exactly.', prompt: borrowMsgEn, maxTokens: 120, lang,
+      }).catch(() => borrowMsgEn)
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        healthFactor: hf,
-        safeToBorrow,
-        ptbB64,
-        message: safeToBorrow
-          ? `Borrowing ${amount} ${token} from NAVI. Current health factor: ${hf?.toFixed(2) ?? 'n/a'}. Guardian will run before execution.`
-          : `⚠️ Health factor ${hf?.toFixed(2)} is too low to safely borrow. Repay existing debt first.`,
+        healthFactor: hf, safeToBorrow, ptbB64, language: lang,
+        message:     borrowMsg,
         actionLabel: `· BORROW · ${amount} ${token} · HEALTH ${hf?.toFixed(2) ?? '?'}`,
       })
       return
@@ -303,10 +336,14 @@ app.post('/api/intent', async (req, res) => {
       let ptbB64: string | null = null
       try { ptbB64 = await buildRepayPTB(sender, token, amount) } catch { /* skip */ }
 
+      const repayMsgEn = `Repaying ${amount} ${token} on NAVI. Guardian will run before execution.`
+      const repayMsg   = lang === 'en' ? repayMsgEn : await complete({
+        system: 'You are Vektor. Translate this DeFi repay message exactly.', prompt: repayMsgEn, maxTokens: 100, lang,
+      }).catch(() => repayMsgEn)
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        ptbB64,
-        message:     `Repaying ${amount} ${token} on NAVI. Guardian will run before execution.`,
+        ptbB64, language: lang,
+        message:     repayMsg,
         actionLabel: `· REPAY · ${amount} ${token} → NAVI`,
       })
       return
@@ -347,12 +384,18 @@ app.post('/api/intent', async (req, res) => {
         : spec?.frequency === 'once' ? 'ONE-TIME'
         : `EVERY ${(spec?.frequency ?? 'DAY').toUpperCase()}`
 
+      const scheduleMsgEn = isDca
+        ? `DCA set up: ${amount} ${token} → ${targetToken} ${freqLabel.toLowerCase()}${totalRuns > 1 ? ` for ${totalRuns} runs` : ''}. First run: ${new Date(nextRun).toLocaleDateString()}.`
+        : `Payment scheduled: ${amount} ${token}${parsed.recipient ? ` to ${parsed.recipient.slice(0, 8)}…` : ''} ${freqLabel.toLowerCase()}. Next: ${new Date(nextRun).toLocaleDateString()}.`
+      const scheduleMessage = lang === 'en' ? scheduleMsgEn : await complete({
+        system: 'You are Vektor. Translate this DeFi scheduling confirmation exactly, keeping token symbols and dates unchanged.',
+        prompt: scheduleMsgEn, maxTokens: 150, lang,
+      }).catch(() => scheduleMsgEn)
+
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        scheduled:   record,
-        message:     isDca
-          ? `DCA set up: ${amount} ${token} → ${targetToken} ${freqLabel.toLowerCase()}${totalRuns > 1 ? ` for ${totalRuns} runs` : ''}. First run: ${new Date(nextRun).toLocaleDateString()}.`
-          : `Payment scheduled: ${amount} ${token}${parsed.recipient ? ` to ${parsed.recipient.slice(0, 8)}…` : ''} ${freqLabel.toLowerCase()}. Next: ${new Date(nextRun).toLocaleDateString()}.`,
+        scheduled: record, language: lang,
+        message:     scheduleMessage,
         actionLabel: `· ${isDca ? 'DCA' : 'SCHEDULED'} · ${amount} ${token}${isDca ? ` → ${targetToken}` : ''} · ${freqLabel}`,
       })
       return
@@ -379,11 +422,17 @@ app.post('/api/intent', async (req, res) => {
         autoExecute: false,
       })
 
+      const condMsgEn   = `Condition armed: will trigger when ${assetSym} goes ${dir} $${threshold}. Current price: $${currentPx?.toFixed(4) ?? '?'}. Polling every 30s.`
+      const condMessage = lang === 'en' ? condMsgEn : await complete({
+        system: 'You are Vektor. Translate this DeFi condition alert exactly, keeping token symbols, prices, and technical terms.',
+        prompt: condMsgEn, maxTokens: 150, lang,
+      }).catch(() => condMsgEn)
+
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        condition:    record,
+        condition: record, language: lang,
         currentPrice: currentPx,
-        message:      `Condition armed: will trigger when ${assetSym} goes ${dir} $${threshold}. Current price: $${currentPx?.toFixed(4) ?? '?'}. Polling every 30s.`,
+        message:      condMessage,
         actionLabel:  `· WATCH · ${assetSym} ${dir === 'below' ? '<' : '>'} $${threshold} · ARMED`,
       })
       return
@@ -407,7 +456,7 @@ app.post('/api/intent', async (req, res) => {
       }).catch(() => ({ amountOut: 0, amountIn: Number(amountIn), priceImpact: 0.05, route: [], gasEstimate: 0, validUntil: Date.now() + 30000 }))
 
       const quoteWithSym = { ...quote, fromSymbol: fromToken, toSymbol: memeToken }
-      const report       = await runGuardian(quoteWithSym, sender, null)
+      const report       = await runGuardian(quoteWithSym, sender, null, lang)
 
       // Track position if auto-exit
       if (parsed.profit_target || parsed.stop_loss) {
@@ -428,13 +477,21 @@ app.post('/api/intent', async (req, res) => {
         ? `· BUY ${memeToken} · STOP -${(parsed.stop_loss * 100).toFixed(0)}% · SCORE ${report.score}/100`
         : `· MEMECOIN · ${fromToken} → ${memeToken} · SCORE ${report.score}/100`
 
+      const memeIssues  = report.flags.filter(f => f.severity !== 'green').map(f => f.title).join(', ') || 'all clear'
+      const memeMsgEn   = `Routing ${amount} ${fromToken} into ${memeToken}. Guardian flagged: ${memeIssues}.`
+      const memeMessage = lang === 'en' ? memeMsgEn : await complete({
+        system: 'You are Vektor. Translate this DeFi routing status message exactly, keeping token symbols in English.',
+        prompt: memeMsgEn, maxTokens: 150, lang,
+      }).catch(() => memeMsgEn)
+
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
         quote:    serializeQuote(quoteWithSym, fromToken, memeToken),
         report:   serializeReport(report),
         _rawReport: report,
         quoteParams: { from: fromToken, to: memeToken, amountIn: toBaseUnits(amount, fromToken).toString(), slippage: parsed.constraints.max_slippage ?? 0.005, sender },
-        message:  `Routing ${amount} ${fromToken} into ${memeToken}. Guardian flagged: ${report.flags.filter(f=>f.severity!=='green').map(f=>f.title).join(', ') || 'all clear'}.`,
+        language: lang,
+        message:  memeMessage,
         actionLabel: label,
       })
       return
@@ -461,14 +518,15 @@ app.post('/api/intent', async (req, res) => {
     const toToken   = (parsed.output_goal ?? 'USDC').toUpperCase()
 
     if (!parsed.input_asset || !parsed.output_goal || !parsed.input_amount) {
-      // Conversational fallback — ask Claude to respond naturally
-      const mem  = sender !== SIM_ADDR ? buildMemoryContext(sender) : ''
-      const msg  = (await complete({
+      // Conversational fallback — respond naturally in user's language
+      const mem = sender !== SIM_ADDR ? buildMemoryContext(sender) : ''
+      const msg = (await complete({
         system:    `You are Vektor, a DeFi financial OS for Sui. Be concise and helpful. ${mem}`,
         prompt:    text,
         maxTokens: 300,
+        lang,
       })).trim() || 'How can I help?'
-      res.json({ ok: true, intent_type: 'general', parsedIntent: parsed, message: msg, actionLabel: '· VEKTOR' })
+      res.json({ ok: true, intent_type: 'general', parsedIntent: parsed, language: lang, message: msg, actionLabel: '· VEKTOR' })
       return
     }
 
@@ -488,13 +546,14 @@ app.post('/api/intent', async (req, res) => {
     })
 
     const quoteWithSym = { ...quote, fromSymbol: fromToken, toSymbol: toToken }
-    const report       = await runGuardian(quoteWithSym, sender, null)
+    const report       = await runGuardian(quoteWithSym, sender, null, lang)
 
     res.json({
       ok: true, intent_type: intent, parsedIntent: parsed,
       quote:    serializeQuote(quoteWithSym, fromToken, toToken),
       report:   serializeReport(report),
       _rawReport: report,
+      language: lang,
       // Store params so client can request a fresh PTB at execution time
       quoteParams: {
         from:      fromToken,
@@ -595,7 +654,7 @@ app.post('/api/simulate', async (req, res) => {
         toSymbol:    'USDC',
       }
       const report = await runGuardian(fakeQuote, sender, null)
-      res.json({ ok: true, report: serializeReport(report), actionLabel: `· SIMULATE · SCORE ${report.score}/100` })
+      res.json({ ok: true, report: serializeReport(report), language: 'en', actionLabel: `· SIMULATE · SCORE ${report.score}/100` })
       return
     }
 

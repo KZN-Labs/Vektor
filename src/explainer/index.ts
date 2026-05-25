@@ -24,7 +24,7 @@ function extractDigest(input: string): string | null {
   return null
 }
 
-export async function explainTransaction(input: string): Promise<ExplainResult> {
+export async function explainTransaction(input: string, lang = 'en'): Promise<ExplainResult> {
   const digest = extractDigest(input)
   if (!digest) throw new Error('Could not extract a valid transaction digest from your input.')
 
@@ -49,13 +49,15 @@ export async function explainTransaction(input: string): Promise<ExplainResult> 
   }, null, 2)
 
   const explanation = (await complete({
-    system:    `You are a Sui blockchain transaction explainer.
-Given raw transaction data, explain in plain English what happened.
-Be concise (2-4 sentences). Include: what action occurred, tokens/amounts involved, fees, outcome.
+    system: `You are a Sui blockchain transaction explainer.
+Given raw transaction data, explain what happened in 2-4 sentences.
+Include: what action occurred, tokens/amounts involved, fees, outcome.
 Format: start with an action word. E.g. "Swapped 100 SUI for 91.4 USDC via Cetus. Fee was 0.25%..."
-Never mention JSON, object IDs, or technical terms unless necessary.`,
+Keep protocol names (Cetus, Aftermath, NAVI) and token symbols (SUI, USDC) in English even if translating.
+Never mention JSON, object IDs, or technical implementation details.`,
     prompt:    `Explain this Sui transaction:\n\n${context}`,
     maxTokens: 512,
+    lang,
   })).trim() || 'Transaction explanation unavailable.'
 
   // Build a short summary for the label

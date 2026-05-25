@@ -33,6 +33,7 @@ interface ChatMessage {
   payload?:        any
   executionDigest?: string
   executionError?:  string
+  language?:        string   // ISO 639-1 code of detected language
 }
 
 /* ─── Quick actions by category ─────────────────────────────────────────── */
@@ -335,6 +336,11 @@ function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
         {msg.actionLabel && (
           <span className="text-[10px] text-purple-400 uppercase tracking-widest font-mono opacity-80">
             {msg.actionLabel}
+          </span>
+        )}
+        {msg.language && msg.language !== 'en' && (
+          <span className="text-[9px] font-mono text-slate-600 border border-white/8 px-1.5 py-0.5 rounded uppercase tracking-widest">
+            {msg.language}
           </span>
         )}
       </div>
@@ -649,6 +655,7 @@ export default function App() {
             ? {
                 ...m,
                 loading:      false,
+                language:     json.language ?? 'en',
                 actionLabel:  intentType === 'swap' || intentType === 'compound' || intentType === 'rebalance' || intentType === 'risk_qualified'
                               ? buildSwapLabel(json.quote, json.report)
                               : json.actionLabel,
@@ -676,6 +683,7 @@ export default function App() {
               ...m,
               loading:     false,
               intentType,
+              language:    json.language ?? 'en',
               actionLabel: json.actionLabel,
               text:        json.message,
               payload:     json,
