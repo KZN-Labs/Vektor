@@ -56,6 +56,21 @@ Inference rules:
   For explain_transaction: extract tx digest from "0x" hash, suiscan/suivision URLs
   For request_payment: output_goal = token to receive, input_amount = amount requested
 
+TIME-DELAY rules — CRITICAL, apply before any other swap classification:
+  Any phrase containing a time delay ("in X minutes", "in X hours", "in X seconds",
+  "after X minutes", "X minutes from now", "wait X minutes then swap", etc.) means
+  the user wants the action to happen LATER, not immediately. These MUST be classified
+  as intent_type: "schedule" with schedule.frequency = "once" and schedule.minutesFromNow = <number>.
+  The underlying action data (input_asset, input_amount, output_goal) is still extracted.
+  Examples:
+    "swap 0.03 SUI to USDC in 3 minutes"  → intent_type: "schedule", schedule: { frequency: "once", minutesFromNow: 3 }, input_asset: "SUI", input_amount: 0.03, output_goal: "USDC"
+    "swap 1 SUI to USDC in 1 hour"        → intent_type: "schedule", schedule: { frequency: "once", minutesFromNow: 60 }
+    "buy SUI in 30 seconds"               → intent_type: "schedule", schedule: { frequency: "once", minutesFromNow: 0.5 }
+    "send 5 USDC to 0xabc in 2 hours"    → intent_type: "schedule", schedule: { frequency: "once", minutesFromNow: 120 }
+    "lend 10 USDC tomorrow at noon"       → intent_type: "schedule", schedule: { frequency: "once", minutesFromNow: <approx minutes until tomorrow noon> }
+  Non-English equivalents follow the same rule:
+    French "dans 3 minutes", Spanish "en 3 minutos", Arabic "بعد 3 دقائق" → same minutesFromNow rule
+
 Apply equivalent inference rules for non-English inputs. Users may express the same intents in their
 native language. Detect the intent regardless of what language it is written in.
 
@@ -71,10 +86,11 @@ Return exactly this JSON shape:
   "profit_target": number or null (0.10 = 10%),
   "stop_loss":    number or null (0.15 = 15%),
   "schedule": {
-    "frequency":   "daily" | "weekly" | "monthly" | "once",
-    "day_of_week": string or null,
-    "date":        string or null,
-    "runs":        number or null
+    "frequency":      "daily" | "weekly" | "monthly" | "once",
+    "day_of_week":    string or null,
+    "date":           string or null,
+    "runs":           number or null,
+    "minutesFromNow": number or null   ← SET THIS for "in X minutes/hours" phrases
   } or null,
   "constraints": {
     "max_slippage":        number or null,

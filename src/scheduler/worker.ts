@@ -1,7 +1,8 @@
 /**
  * Scheduler worker — checks every minute for due scheduled intents.
- * Emits 'due' events when an intent is ready to execute.
- * The server listens and either auto-executes or queues a prompt.
+ * When a DCA or one-time swap fires:
+ *   • If SUI_PRIVATE_KEY is set → auto-executes server-side via Routex
+ *   • Otherwise → queues an actionable alert for the user
  */
 
 import cron      from 'node-cron'
@@ -10,6 +11,10 @@ import { getAllScheduled, markScheduledRun, type ScheduledIntent } from '../db/s
 import { addAlert } from '../memory/index.js'
 
 export const schedulerEvents = new EventEmitter()
+
+const TOKEN_DECIMALS: Record<string, number> = {
+  SUI: 1e9, USDC: 1e6, USDT: 1e6, DEEP: 1e6, WETH: 1e8, WBTC: 1e8, BUCK: 1e9,
+}
 
 function nextRunAfter(intent: ScheduledIntent): string {
   const { frequency, dayOfWeek } = intent.schedule
@@ -43,8 +48,74 @@ function nextRunAfter(intent: ScheduledIntent): string {
     return next.toISOString()
   }
 
-  // once — no next
+  // once — no next run
   return ''
+}
+
+/** Auto-execute a scheduled swap server-side using the stored keypair */
+async function tryAutoExecute(item: ScheduledIntent): Promise<void> {
+  const privateKey = process.env.SUI_PRIVATE_KEY
+  const label      = item.type === 'dca' ? 'DCA' : 'Scheduled swap'
+  const fromToken  = item.token.toUpperCase()
+  const toToken    = (item.targetToken ?? 'USDC').toUpperCase()
+  const amount     = item.amount
+
+  if (!privateKey) {
+    // No server key — send actionable alert for the user to approve manually
+    addAlert(item.wallet, {
+      type:     'scheduled',
+      message:  `⏰ ${label} due: ${amount} ${fromToken}${toToken !== fromToken ? ` → ${toToken}` : ''}. Open Vektor to execute.`,
+      severity: 'info',
+    })
+    schedulerEvents.emit('due', item)
+    return
+  }
+
+  try {
+    const [{ Ed25519Keypair }, { decodeSuiPrivateKey }, { SuiClient, getFullnodeUrl }] = await Promise.all([
+      import('@mysten/sui/keypairs/ed25519'),
+      import('@mysten/sui/cryptography'),
+      import('@mysten/sui/client'),
+    ])
+
+    const { secretKey } = decodeSuiPrivateKey(privateKey)
+    const keypair       = Ed25519Keypair.fromSecretKey(secretKey)
+    const wallet        = keypair.getPublicKey().toSuiAddress()
+
+    const amountIn = BigInt(Math.round(amount * (TOKEN_DECIMALS[fromToken] ?? 1e9)))
+
+    const { default: Routex } = await import('routex-sui')
+    const routex = new Routex('mainnet', wallet)
+    const quote  = await routex.getQuote({
+      from:              fromToken,
+      to:                toToken,
+      amount:            amountIn,
+      slippageTolerance: 0.005,
+      senderAddress:     wallet,
+    })
+
+    const suiClient = new SuiClient({ url: getFullnodeUrl('mainnet') })
+    const result    = await suiClient.signAndExecuteTransaction({
+      signer:      keypair,
+      transaction: quote.ptb,
+      options:     { showEffects: true },
+    })
+
+    addAlert(item.wallet, {
+      type:     'scheduled',
+      message:  `✓ ${label} executed: ${amount} ${fromToken} → ${toToken}. TX: ${result.digest.slice(0, 12)}…${result.digest.slice(-6)}`,
+      severity: 'info',
+    })
+    schedulerEvents.emit('executed', { item, digest: result.digest })
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    addAlert(item.wallet, {
+      type:     'scheduled',
+      message:  `⚠️ ${label} triggered (${amount} ${fromToken} → ${toToken}) but auto-execute failed: ${errMsg.slice(0, 120)}`,
+      severity: 'warning',
+    })
+    schedulerEvents.emit('due', item)
+  }
 }
 
 export function startScheduler() {
@@ -58,19 +129,12 @@ export function startScheduler() {
       const nextRun = new Date(item.schedule.nextRun).getTime()
       if (nextRun > now) continue
 
-      // Mark as run
+      // Advance schedule (or mark done for one-time)
       const next = nextRunAfter(item)
       markScheduledRun(item.id, next)
 
-      // Notify UI via SSE / memory
-      addAlert(item.wallet, {
-        type:     'scheduled',
-        message:  `Scheduled ${item.type === 'dca' ? 'DCA' : 'payment'}: ${item.amount} ${item.token}${item.targetToken ? ` → ${item.targetToken}` : ''}`,
-        severity: 'info',
-      })
-
-      // Emit for server to handle
-      schedulerEvents.emit('due', item)
+      // Fire: auto-execute if we have a server key, otherwise alert
+      await tryAutoExecute(item)
     }
   })
 }

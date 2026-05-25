@@ -111,8 +111,14 @@ function serializeReport(r: any) {
 /* ─── Parse next-run date for scheduler ─────────────────────────────────── */
 
 function calcNextRun(spec: any): string {
-  const now  = new Date()
+  const now = new Date()
   if (!spec) return now.toISOString()
+
+  // Time-delay: "in X minutes" / "in X hours"
+  if (spec.minutesFromNow != null && spec.minutesFromNow > 0) {
+    return new Date(now.getTime() + spec.minutesFromNow * 60_000).toISOString()
+  }
+
   if (spec.date) return new Date(spec.date).toISOString()
   if (spec.frequency === 'once') return now.toISOString()
   if (spec.frequency === 'daily') {
@@ -120,7 +126,7 @@ function calcNextRun(spec: any): string {
     return next.toISOString()
   }
   if (spec.frequency === 'weekly') {
-    const dayMap: Record<string, number> = { sunday:0,monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6 }
+    const dayMap: Record<string, number> = { sunday:0, monday:1, tuesday:2, wednesday:3, thursday:4, friday:5, saturday:6 }
     const target = dayMap[spec.day_of_week?.toLowerCase() ?? 'monday'] ?? 1
     const next   = new Date(now)
     const ahead  = (target + 7 - now.getDay()) % 7 || 7

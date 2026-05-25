@@ -11,37 +11,77 @@ const client = new SuiClient({ url: getFullnodeUrl('mainnet'), network: 'mainnet
 /* ─── Known tokens ───────────────────────────────────────────────────────── */
 
 const KNOWN_COINS: Record<string, { symbol: string; decimals: number }> = {
-  '0x2::sui::SUI':                                                                                          { symbol: 'SUI',  decimals: 9 },
-  '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN':                        { symbol: 'USDC', decimals: 6 },
-  '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN':                        { symbol: 'USDT', decimals: 6 },
-  '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN':                        { symbol: 'WETH', decimals: 8 },
-  '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881::coin::COIN':                        { symbol: 'WBTC', decimals: 8 },
-  '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946b270::deep::DEEP':                        { symbol: 'DEEP', decimals: 6 },
+  // SUI
+  '0x2::sui::SUI':                                                                                            { symbol: 'SUI',   decimals: 9 },
+  // Native Circle USDC (used by Routex, Cetus, Aftermath)
+  '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC':                        { symbol: 'USDC',  decimals: 6 },
+  // Legacy Wormhole bridged USDC
+  '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN':                        { symbol: 'USDC',  decimals: 6 },
+  // USDT
+  '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN':                        { symbol: 'USDT',  decimals: 6 },
+  // WETH
+  '0xaf8cd5edc19c4512f4259f0bee101a40d41ebed738ade5874359610ef8eeced5::coin::COIN':                        { symbol: 'WETH',  decimals: 8 },
+  // WBTC
+  '0x027792d9fed7f9844eb4839566001bb6f6cb4804f66aa2da6fe1ee242d896881::coin::COIN':                        { symbol: 'WBTC',  decimals: 8 },
+  // DEEP (Routex mainnet address)
+  '0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP':                        { symbol: 'DEEP',  decimals: 6 },
+  // haSUI / vSUI
   '0xbde4ba4c2e274a60ce15c1cfff9e5c42e41654ac8b6d906a57efa4bd3c29f47d::hasui::HASUI':                     { symbol: 'haSUI', decimals: 9 },
-  '0x549e8b69270defbfafd4f94e17ec44cdbdd99820b33bda2278dea3b9a32d3f55::cert::CERT':                       { symbol: 'vSUI', decimals: 9 },
+  '0x549e8b69270defbfafd4f94e17ec44cdbdd99820b33bda2278dea3b9a32d3f55::cert::CERT':                       { symbol: 'vSUI',  decimals: 9 },
+  // afSUI (Aftermath)
+  '0xf325ce1300e8dac124071d3152c5c5ee6174914f8bc2161e88329cf579246efc::afsui::AFSUI':                     { symbol: 'afSUI', decimals: 9 },
 }
 
-/* ─── Price fetching (CoinGecko fallback) ───────────────────────────────── */
+/* ─── Price fetching ─────────────────────────────────────────────────────── */
+
+// Source 1: DeFi Llama — free, no auth, highly reliable
+async function fetchPricesDefiLlama(): Promise<Record<string, number>> {
+  const keys = [
+    'coingecko:sui',
+    'coingecko:usd-coin',
+    'coingecko:tether',
+    'coingecko:weth',
+    'coingecko:wrapped-bitcoin',
+    'coingecko:deepbook',
+  ].join(',')
+  const res  = await fetch(`https://coins.llama.fi/prices/current/${keys}`, { signal: AbortSignal.timeout(6000) })
+  const json = await res.json() as { coins: Record<string, { price: number }> }
+  const c    = json.coins
+  const sui  = c['coingecko:sui']?.price ?? 0
+  return {
+    SUI:   sui,
+    USDC:  c['coingecko:usd-coin']?.price       ?? 1,
+    USDT:  c['coingecko:tether']?.price          ?? 1,
+    WETH:  c['coingecko:weth']?.price            ?? 0,
+    WBTC:  c['coingecko:wrapped-bitcoin']?.price ?? 0,
+    DEEP:  c['coingecko:deepbook']?.price        ?? 0,
+    haSUI: sui,
+    vSUI:  sui,
+  }
+}
+
+// Source 2: Coinbase public API — no auth needed
+async function fetchSuiPriceCoinbase(): Promise<number> {
+  const res  = await fetch('https://api.coinbase.com/v2/exchange-rates?currency=SUI', { signal: AbortSignal.timeout(5000) })
+  const json = await res.json() as { data: { rates: Record<string, string> } }
+  return parseFloat(json.data.rates['USD'] ?? '0') || 0
+}
 
 async function fetchPricesUsd(): Promise<Record<string, number>> {
+  // Try DeFi Llama first
   try {
-    const ids = 'sui,usd-coin,tether,weth,wrapped-bitcoin,deepbook'
-    const url  = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`
-    const res  = await fetch(url, { signal: AbortSignal.timeout(5000) })
-    const json = await res.json() as Record<string, { usd: number }>
-    return {
-      SUI:   json['sui']?.usd        ?? 0,
-      USDC:  json['usd-coin']?.usd   ?? 1,
-      USDT:  json['tether']?.usd     ?? 1,
-      WETH:  json['weth']?.usd       ?? 0,
-      WBTC:  json['wrapped-bitcoin']?.usd ?? 0,
-      DEEP:  json['deepbook']?.usd   ?? 0,
-      haSUI: json['sui']?.usd        ?? 0,
-      vSUI:  json['sui']?.usd        ?? 0,
-    }
-  } catch {
-    return { SUI: 0, USDC: 1, USDT: 1, WETH: 0, WBTC: 0, DEEP: 0, haSUI: 0, vSUI: 0 }
-  }
+    const prices = await fetchPricesDefiLlama()
+    if (prices.SUI > 0) return prices
+  } catch { /* fall through */ }
+
+  // Fallback: Coinbase for SUI, stablecoins default to $1
+  try {
+    const sui = await fetchSuiPriceCoinbase()
+    return { SUI: sui, USDC: 1, USDT: 1, WETH: 0, WBTC: 0, DEEP: 0, haSUI: sui, vSUI: sui }
+  } catch { /* fall through */ }
+
+  // Last resort: return zeros (portfolio still shows, just without USD values)
+  return { SUI: 0, USDC: 1, USDT: 1, WETH: 0, WBTC: 0, DEEP: 0, haSUI: 0, vSUI: 0 }
 }
 
 /* ─── Main portfolio fetch ───────────────────────────────────────────────── */
@@ -99,12 +139,15 @@ export async function fetchPortfolio(wallet: string): Promise<PortfolioSnapshot>
 
   const balances: TokenBalance[] = []
   for (const [coinType, raw] of aggregated) {
-    const known = KNOWN_COINS[coinType]
-    if (!known) continue
-    const decimals  = known.decimals
+    const known    = KNOWN_COINS[coinType]
+    // For unknown coins: extract symbol from coinType (e.g. "::usdc::USDC" → "USDC")
+    const symbol   = known?.symbol ?? coinType.split('::').pop() ?? coinType.slice(0, 6)
+    const decimals = known?.decimals ?? 9  // default 9 for unknown
     const formatted = (Number(raw) / 10 ** decimals).toFixed(decimals >= 9 ? 4 : 6)
-    const usdValue  = Number(formatted) * (priceMap[known.symbol] ?? 0)
-    balances.push({ coinType, symbol: known.symbol, raw: raw.toString(), formatted, usdValue })
+    const usdValue  = Number(formatted) * (priceMap[symbol] ?? 0)
+    // Skip dust (< 0.000001 of any token)
+    if (Number(formatted) < 0.000001) continue
+    balances.push({ coinType, symbol, raw: raw.toString(), formatted, usdValue })
   }
 
   balances.sort((a, b) => b.usdValue - a.usdValue)

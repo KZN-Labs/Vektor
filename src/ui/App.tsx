@@ -36,6 +36,36 @@ interface ChatMessage {
   language?:        string   // ISO 639-1 code of detected language
 }
 
+/* ─── Vektor SVG components ──────────────────────────────────────────────── */
+
+function VektorLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 772 260" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} aria-label="Vektor">
+      <path d="M260 129.471L248.649 150.796L199.934 124.865L196.939 218.719L172.791 217.949L176.405 104.7L194.155 94.4225L260 129.471Z" fill="currentColor"/>
+      <path fillRule="evenodd" clipRule="evenodd" d="M155.3 176.405L165.577 194.155L130.529 260L109.204 248.649L135.133 199.934L41.2811 196.939L42.0509 172.791L155.3 176.405Z" fill="currentColor"/>
+      <path fillRule="evenodd" clipRule="evenodd" d="M83.5947 155.3L87.2089 42.0509L63.061 41.2811L60.0646 135.133L11.3514 109.204L0 130.529L65.845 165.577L83.5947 155.3Z" fill="currentColor"/>
+      <path fillRule="evenodd" clipRule="evenodd" d="M150.796 11.3514L124.865 60.0646L218.719 63.061L217.949 87.2089L104.7 83.5947L94.4225 65.845L129.471 0L150.796 11.3514Z" fill="currentColor"/>
+      <path d="M722.369 185.721V117.939H714.247V101.694H731.052V117.379H736.934C739.268 112.244 742.863 108.229 747.718 105.335C752.666 102.441 758.455 100.994 765.083 100.994H771.946V114.438H764.243C755.84 114.438 749.352 116.912 744.777 121.86C740.202 126.809 737.914 133.484 737.914 141.887V185.721H722.369Z" fill="currentColor"/>
+      <path d="M662.671 187.402C653.988 187.402 646.379 185.628 639.843 182.08C633.401 178.439 628.406 173.351 624.858 166.815C621.31 160.28 619.536 152.577 619.536 143.708C619.536 134.838 621.31 127.136 624.858 120.6C628.406 114.065 633.401 109.023 639.843 105.475C646.379 101.834 653.988 100.013 662.671 100.013C671.634 100.013 679.289 101.787 685.638 105.335C692.08 108.883 697.029 113.925 700.483 120.46C704.031 126.995 705.805 134.745 705.805 143.708C705.805 152.577 704.031 160.326 700.483 166.955C697.029 173.491 692.08 178.532 685.638 182.08C679.196 185.628 671.54 187.402 662.671 187.402ZM662.671 173.677C671.353 173.677 678.076 171.063 682.837 165.835C687.692 160.513 690.12 153.137 690.12 143.708C690.12 134.184 687.692 126.809 682.837 121.58C678.076 116.352 671.353 113.738 662.671 113.738C654.081 113.738 647.359 116.399 642.504 121.72C637.649 126.949 635.222 134.278 635.222 143.708C635.222 153.137 637.649 160.513 642.504 165.835C647.359 171.063 654.081 173.677 662.671 173.677Z" fill="currentColor"/>
+      <path d="M587.864 185.721C583.383 185.721 579.882 184.601 577.361 182.36C574.933 180.026 573.72 176.572 573.72 171.997V113.738H558.034V101.694H573.86V76.4856H589.265V101.694H611.252V113.738H589.405V173.397H613.493V185.721H587.864Z" fill="currentColor"/>
+      <path d="M422.428 187.402C413.652 187.402 406.043 185.628 399.601 182.08C393.159 178.439 388.164 173.304 384.616 166.675C381.162 160.046 379.434 152.297 379.434 143.428C379.434 134.558 381.162 126.902 384.616 120.46C388.164 113.925 393.112 108.883 399.461 105.335C405.81 101.787 413.232 100.013 421.728 100.013C429.851 100.013 436.853 101.647 442.735 104.915C448.71 108.183 453.332 112.804 456.6 118.779C459.867 124.755 461.501 131.85 461.501 140.066V146.368H394.559C395.026 155.145 397.687 162.007 402.542 166.955C407.49 171.81 414.072 174.238 422.288 174.238C427.984 174.238 432.792 173.071 436.713 170.736C440.634 168.309 443.342 164.761 444.836 160.093H460.801C458.747 168.776 454.312 175.498 447.497 180.26C440.774 185.021 432.418 187.402 422.428 187.402ZM395.12 134.885H446.376C445.629 127.976 443.062 122.607 438.674 118.779C434.379 114.952 428.684 113.038 421.588 113.038C414.586 113.038 408.751 114.952 404.082 118.779C399.414 122.607 396.427 127.976 395.12 134.885Z" fill="currentColor"/>
+      <path d="M475.445 185.721V68.0828H491.13V139.506H491.69L532.163 101.694H551.349L512.837 136.425L554.57 185.721H535.524L502.193 146.088L491.13 155.051V185.721H475.445Z" fill="currentColor"/>
+      <path d="M370.058 67.8128L366.232 185.976L354.698 192.698L285 156.128L292.321 142.177L350.891 172.906L354.311 67.3025L370.058 67.8128Z" fill="currentColor"/>
+    </svg>
+  )
+}
+
+function VektorSymbol({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 449 449" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} aria-hidden="true">
+      <path d="M449 223.586L429.397 260.413L345.271 215.633L340.099 377.711L298.397 376.381L304.638 180.81L335.291 163.06L449 223.586Z" fill="currentColor"/>
+      <path fillRule="evenodd" clipRule="evenodd" d="M268.19 304.638L285.94 335.291L225.414 449L188.587 429.397L233.364 345.271L71.2894 340.099L72.6186 298.397L268.19 304.638Z" fill="currentColor"/>
+      <path fillRule="evenodd" clipRule="evenodd" d="M144.362 268.19L150.603 72.6186L108.901 71.2894L103.727 233.364L19.603 188.587L0 225.414L113.709 285.94L144.362 268.19Z" fill="currentColor"/>
+      <path fillRule="evenodd" clipRule="evenodd" d="M260.413 19.603L215.633 103.727L377.711 108.901L376.381 150.603L180.81 144.362L163.06 113.709L223.586 0L260.413 19.603Z" fill="currentColor"/>
+    </svg>
+  )
+}
+
 /* ─── Quick actions by category ─────────────────────────────────────────── */
 
 const QUICK_ACTIONS = [
@@ -332,7 +362,10 @@ function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
   return (
     <div className="msg-in flex flex-col gap-2 max-w-full">
       <div className="flex items-center gap-2 pl-0.5 flex-wrap">
-        <span className="text-[11px] font-bold text-purple-400 font-mono tracking-widest">⚡ VEKTOR</span>
+        <div className="flex items-center gap-1.5 text-purple-400">
+          <VektorSymbol className="w-3.5 h-3.5" />
+          <span className="text-[11px] font-bold font-mono tracking-widest">VEKTOR</span>
+        </div>
         {msg.actionLabel && (
           <span className="text-[10px] text-purple-400 uppercase tracking-widest font-mono opacity-80">
             {msg.actionLabel}
@@ -812,7 +845,7 @@ export default function App() {
       {/* ── Header ─────────────────────────────────────────────────── */}
       <header className="shrink-0 px-6 py-4 border-b border-white/5 flex items-center justify-between bg-[#0a0a0f]/90 backdrop-blur-md z-20">
         <div className="flex items-center gap-3">
-          <span className="font-display text-2xl text-white leading-none">⚡ Vektor</span>
+          <VektorLogo className="h-7 w-auto text-white" />
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-xs text-slate-500 font-mono">mainnet</span>
@@ -912,7 +945,7 @@ export default function App() {
 
               {messages.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-24 gap-5 text-center select-none">
-                  <span className="font-display text-6xl text-white">⚡</span>
+                  <VektorSymbol className="w-16 h-16 text-white opacity-90" />
                   <div className="space-y-2">
                     <p className="text-white font-semibold tracking-tight">Vektor — Financial OS for Sui</p>
                     <p className="text-sm text-slate-500 max-w-sm mx-auto leading-relaxed">

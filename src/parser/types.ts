@@ -23,11 +23,12 @@ export type IntentType =
   | 'check_health_factor'
 
 export interface ScheduleSpec {
-  frequency:    'daily' | 'weekly' | 'monthly' | 'once'
-  day_of_week?: string   // e.g. "friday"
-  date?:        string   // ISO date string
-  time?:        string   // "HH:MM"
-  runs?:        number   // total number of executions
+  frequency:      'daily' | 'weekly' | 'monthly' | 'once'
+  day_of_week?:   string   // e.g. "friday"
+  date?:          string   // ISO date string
+  time?:          string   // "HH:MM"
+  runs?:          number   // total number of executions
+  minutesFromNow?: number  // for "in X minutes/hours" — offset from current time
 }
 
 export interface ParsedIntent {
