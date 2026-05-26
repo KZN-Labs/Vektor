@@ -340,6 +340,38 @@ function GeneralCard({ message }: { message: string }) {
   )
 }
 
+/* ─── Execution result i18n ──────────────────────────────────────────────── */
+
+interface ExecStrings {
+  executed:    string   // "Swap executed on Sui mainnet"
+  digest:      string   // "Digest:"
+  failed:      string   // "Transaction failed"
+  awaiting:    string   // "Awaiting wallet…"
+  approveHint: string   // "Approve the transaction in your wallet extension"
+}
+
+const EXEC_I18N: Record<string, ExecStrings> = {
+  en: { executed: 'Swap executed on Sui mainnet', digest: 'Digest:', failed: 'Transaction failed', awaiting: 'Awaiting wallet…', approveHint: 'Approve the transaction in your wallet extension' },
+  fr: { executed: 'Swap exécuté sur Sui mainnet', digest: 'Résumé :', failed: 'Transaction échouée', awaiting: 'En attente du portefeuille…', approveHint: 'Approuvez la transaction dans votre extension de portefeuille' },
+  es: { executed: 'Swap ejecutado en Sui mainnet', digest: 'Resumen:', failed: 'Transacción fallida', awaiting: 'Esperando billetera…', approveHint: 'Aprueba la transacción en tu extensión de billetera' },
+  pt: { executed: 'Swap executado na Sui mainnet', digest: 'Resumo:', failed: 'Transação falhou', awaiting: 'Aguardando carteira…', approveHint: 'Aprove a transação na extensão da sua carteira' },
+  yo: { executed: 'A ṣe swap lori Sui mainnet', digest: 'Àkọsílẹ̀:', failed: 'Ìdúnàádúrà kùnà', awaiting: 'Ń dúró de àpamọ́wọlé…', approveHint: 'Fọwọ́ sí ìdúnàádúrà nínú àfikún àpamọ́wọlé rẹ' },
+  ha: { executed: 'An aiwatar da swap a kan Sui mainnet', digest: 'Taƙaitawa:', failed: "Ma'amala ta gaza", awaiting: 'Ana jiran walat…', approveHint: 'Amince da ma\'amala a cikin ƙarin walat ɗin ku' },
+  ig: { executed: 'Emere swap na Sui mainnet', digest: 'Nchoputa:', failed: 'Azụmahịa dara ada', awaiting: 'Na-atọ ndị ọrụ akpa ego…', approveHint: 'Kwenye azụmahịa na mgbakwunye akpa ego gị' },
+  ar: { executed: 'تم تنفيذ الصفقة على Sui mainnet', digest: 'الملخص:', failed: 'فشلت المعاملة', awaiting: 'بانتظار المحفظة…', approveHint: 'وافق على المعاملة في امتداد محفظتك' },
+  zh: { executed: '交易已在 Sui 主网执行', digest: '摘要：', failed: '交易失败', awaiting: '等待钱包确认…', approveHint: '请在您的钱包插件中批准此交易' },
+  ja: { executed: 'Sui メインネットでスワップが実行されました', digest: 'ダイジェスト：', failed: 'トランザクション失敗', awaiting: 'ウォレット承認待ち…', approveHint: 'ウォレット拡張機能でトランザクションを承認してください' },
+  de: { executed: 'Swap auf Sui Mainnet ausgeführt', digest: 'Zusammenfassung:', failed: 'Transaktion fehlgeschlagen', awaiting: 'Warte auf Wallet…', approveHint: 'Bestätigen Sie die Transaktion in Ihrer Wallet-Erweiterung' },
+  ko: { executed: 'Sui 메인넷에서 스왑이 실행되었습니다', digest: '다이제스트:', failed: '트랜잭션 실패', awaiting: '지갑 승인 대기 중…', approveHint: '지갑 확장 프로그램에서 트랜잭션을 승인하세요' },
+  ru: { executed: 'Своп выполнен в сети Sui mainnet', digest: 'Хеш:', failed: 'Транзакция не удалась', awaiting: 'Ожидание кошелька…', approveHint: 'Подтвердите транзакцию в расширении кошелька' },
+  tr: { executed: "Sui mainnet'te takas gerçekleştirildi", digest: 'Özet:', failed: 'İşlem başarısız', awaiting: 'Cüzdan bekleniyor…', approveHint: 'Cüzdan uzantınızda işlemi onaylayın' },
+  sw: { executed: 'Ubadilishaji umefanyika kwenye Sui mainnet', digest: 'Muhtasari:', failed: 'Muamala umeshindwa', awaiting: 'Kusubiri pochi…', approveHint: 'Thibitisha muamala katika kiendelezi cha pochi yako' },
+}
+
+function execT(lang: string | undefined): ExecStrings {
+  return EXEC_I18N[lang ?? 'en'] ?? EXEC_I18N['en']
+}
+
 /* ─── Message bubble ──────────────────────────────────────────────────────── */
 
 interface BubbleProps {
@@ -400,15 +432,17 @@ function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
         )
 
         if (msg.guardData && msg.phase === 'confirmed') {
+          const ex = execT(msg.language)
+
           // Execution succeeded — show digest + suiscan link
           if (msg.executionDigest) return (
             <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-6 py-5 space-y-3">
               <div className="flex items-center gap-2">
                 <span className="text-emerald-400 text-lg">✓</span>
-                <span className="text-white font-semibold text-sm">Swap executed on Sui mainnet</span>
+                <span className="text-white font-semibold text-sm">{ex.executed}</span>
               </div>
               <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
-                <span>Digest:</span>
+                <span>{ex.digest}</span>
                 <span className="text-slate-300">{msg.executionDigest.slice(0, 12)}…{msg.executionDigest.slice(-6)}</span>
                 <a
                   href={`https://suiscan.xyz/mainnet/tx/${msg.executionDigest}`}
@@ -426,7 +460,7 @@ function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
             <div className="rounded-xl border border-red-500/25 bg-red-500/5 px-6 py-5 space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-red-400">✕</span>
-                <span className="text-white font-semibold text-sm">Transaction failed</span>
+                <span className="text-white font-semibold text-sm">{ex.failed}</span>
               </div>
               <p className="text-xs text-red-300/70">{msg.executionError}</p>
             </div>
@@ -436,9 +470,9 @@ function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
             <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 px-6 py-5 space-y-2">
               <div className="flex items-center gap-2">
                 <Spinner />
-                <span className="text-white font-semibold text-sm">{msg.actionLabel?.replace(/^· /, '') ?? 'Awaiting wallet…'}</span>
+                <span className="text-white font-semibold text-sm">{ex.awaiting}</span>
               </div>
-              <p className="text-xs text-slate-600 font-mono">Approve the transaction in your wallet extension</p>
+              <p className="text-xs text-slate-600 font-mono">{ex.approveHint}</p>
             </div>
           )
         }
