@@ -13,10 +13,13 @@ const STEP_LABELS: Record<string, string> = {
 }
 
 export function PTBPreview({ parsedIntent, quote, originalText }: Props) {
-  const minOut = quote.amountOut
-    ? (Number(BigInt(quote.amountOut)) * (1 - (quote.priceImpact ?? 0)) * 0.995).toFixed(
-        (quote.toSymbol === 'SUI' ? 4 : 6)
-      )
+  // Minimum guaranteed = expected output × (1 − slippage tolerance)
+  // Use the already-formatted decimal value — never touch the raw base-unit integer
+  const slippage   = parsedIntent.constraints?.max_slippage ?? 0.005
+  const expectedOut = parseFloat(quote.amountOutFormatted ?? '0')
+  const decimals   = quote.toSymbol === 'SUI' ? 4 : 6
+  const minOut     = expectedOut > 0
+    ? (expectedOut * (1 - slippage)).toFixed(decimals)
     : '—'
 
   return (
@@ -75,7 +78,7 @@ export function PTBPreview({ parsedIntent, quote, originalText }: Props) {
             ~{minOut}
             <span className="text-sm font-normal text-slate-500 ml-1">{parsedIntent.output_goal?.toUpperCase()}</span>
           </p>
-          <p className="text-xs text-slate-600">{((parsedIntent.constraints?.max_slippage ?? 0.005) * 100).toFixed(1)}% slippage</p>
+          <p className="text-xs text-slate-600">{(slippage * 100).toFixed(1)}% slippage</p>
         </div>
       </div>
 

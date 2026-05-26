@@ -18,7 +18,7 @@ import { complete, activeProvider, LANG_NAMES, SUPPORTED_LANGS } from './ai/clie
 import { parseIntent }          from './parser/intent.js'
 import { runGuardian }          from './guardian/v2.js'
 import { rewritePTB }           from './guardian/rewriter.js'
-import { fetchPortfolio, fetchTransaction } from './portfolio/fetcher.js'
+import { fetchPortfolio, fetchTransaction, getTokenBalance } from './portfolio/fetcher.js'
 import { getHealthFactor, getNaviPositions, getPoolRates,
          buildDepositPTB, buildBorrowPTB, buildRepayPTB } from './navi/client.js'
 import { explainTransaction }   from './explainer/index.js'
@@ -537,6 +537,24 @@ app.post('/api/intent', async (req, res) => {
     }
 
     const amountIn = toBaseUnits(parsed.input_amount, fromToken)
+
+    // ── Balance check — reject before hitting Routex ─────────────────
+    if (sender !== SIM_ADDR) {
+      const required = parsed.input_amount!
+      const actual   = await getTokenBalance(sender, fromToken).catch(() => Infinity)
+      if (actual < required) {
+        const have    = actual.toFixed(TOKEN_DECIMALS[fromToken] >= 1e9 ? 4 : 6)
+        const need    = required.toFixed(TOKEN_DECIMALS[fromToken] >= 1e9 ? 4 : 6)
+        const errEn   = `Insufficient ${fromToken} balance. You have ${have} ${fromToken} but this swap needs ${need} ${fromToken}.`
+        const errMsg  = lang === 'en' ? errEn : await complete({
+          system: 'You are Vektor. Translate this error message exactly, keeping token symbols and numbers unchanged.',
+          prompt: errEn, maxTokens: 80, lang,
+        }).catch(() => errEn)
+        res.json({ ok: false, error: errMsg, language: lang })
+        return
+      }
+    }
+
     const routex   = new Routex('mainnet', sender)
 
     // SEAL_V1.5 — encrypt intent here using Seal SDK before submission

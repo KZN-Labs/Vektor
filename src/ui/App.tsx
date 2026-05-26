@@ -395,7 +395,7 @@ function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
           <div className="space-y-4">
             <PTBPreview parsedIntent={msg.guardData.parsedIntent} quote={msg.guardData.quote} originalText={msg.originalText ?? ''} />
             <GuardianReport report={msg.guardData.report} rewriting={msg.phase === 'rewriting'} wasRewritten={msg.phase === 'rewritten'} diff={msg.guardData.diff} onFix={onFix} />
-            <ConfirmationGate report={msg.guardData.report} quote={msg.guardData.quote} parsedIntent={msg.guardData.parsedIntent} state={msg.phase as AppState} onConfirm={onConfirm} onReset={() => {}} />
+            <ConfirmationGate report={msg.guardData.report} quote={msg.guardData.quote} parsedIntent={msg.guardData.parsedIntent} state={msg.phase as AppState} onConfirm={onConfirm} onReset={() => {}} language={msg.language} />
           </div>
         )
 

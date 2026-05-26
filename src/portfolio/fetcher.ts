@@ -191,6 +191,29 @@ export async function fetchPortfolio(wallet: string): Promise<PortfolioSnapshot>
   }
 }
 
+/* ─── Balance check helper ───────────────────────────────────────────────── */
+
+/**
+ * Returns the human-readable balance of a given token symbol for a wallet.
+ * Sums across all matching coinTypes (handles native + bridged USDC etc.).
+ * Returns Infinity for unknown tokens so the caller never blocks them.
+ */
+export async function getTokenBalance(wallet: string, symbol: string): Promise<number> {
+  const upper = symbol.toUpperCase()
+  const allBalances = await client.getAllBalances({ owner: wallet })
+  let total = 0
+  for (const b of allBalances) {
+    const info = KNOWN_COINS[b.coinType]
+    if (info?.symbol === upper) {
+      total += Number(b.totalBalance) / Math.pow(10, info.decimals)
+    }
+  }
+  // Return Infinity if token is unknown (don't block unknown coins)
+  return total === 0 && !Object.values(KNOWN_COINS).some(c => c.symbol === upper)
+    ? Infinity
+    : total
+}
+
 /* ─── Transaction fetch for explainer ───────────────────────────────────── */
 
 export async function fetchTransaction(digest: string) {
