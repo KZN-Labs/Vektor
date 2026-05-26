@@ -79,12 +79,14 @@ function activeProvider(): Provider {
 /**
  * Send a prompt to whichever AI provider is configured.
  * Pass `lang` to have the response generated in the user's language.
+ * Pass `jsonMode: true` to enable structured JSON output (no markdown fences).
  */
 export async function complete(opts: {
   system:     string
   prompt:     string
   maxTokens?: number
-  lang?:      string   // ISO 639-1 code — injects language instruction
+  lang?:      string    // ISO 639-1 code — injects language instruction
+  jsonMode?:  boolean   // enforce raw JSON output (no fences, no preamble)
 }): Promise<string> {
   const provider = activeProvider()
 
@@ -106,8 +108,10 @@ export async function complete(opts: {
   if (provider === 'groq') {
     const client = new Groq({ apiKey: process.env.GROQ_API_KEY })
     const res = await client.chat.completions.create({
-      model:      'llama-3.3-70b-versatile',
-      max_tokens: opts.maxTokens ?? 1024,
+      model:            'llama-3.3-70b-versatile',
+      max_tokens:       opts.maxTokens ?? 1024,
+      // json_object mode makes Groq return raw JSON — no markdown fences ever
+      response_format:  opts.jsonMode ? { type: 'json_object' } : { type: 'text' },
       messages: [
         { role: 'system', content: system },
         { role: 'user',   content: opts.prompt },

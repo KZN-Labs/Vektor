@@ -106,24 +106,70 @@ Return exactly this JSON shape:
   "confidence":    number between 0 and 1
 }`
 
+/**
+ * Attempt to salvage a truncated JSON string.
+ * Strips the last incomplete key/value, then closes any open braces.
+ */
+function repairJSON(raw: string): ParsedIntent | null {
+  try {
+    let s = raw.trim()
+
+    // Remove trailing incomplete string value: ..."key": "val
+    s = s.replace(/,?\s*"[^"]*":\s*"[^"]*$/, '')
+    // Remove trailing incomplete key: ..."key
+    s = s.replace(/,?\s*"[^"]*$/, '')
+    // Remove trailing comma
+    s = s.replace(/,\s*$/, '')
+
+    // Close any open nested object (constraints block)
+    const opens  = (s.match(/\{/g) ?? []).length
+    const closes = (s.match(/\}/g) ?? []).length
+    s += '}'.repeat(Math.max(0, opens - closes))
+
+    const parsed = JSON.parse(s) as ParsedIntent
+    // Must have at least intent_type to be useful
+    if (!parsed.intent_type) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
 export async function parseIntent(userInput: string, walletContext?: string): Promise<ParsedIntent> {
-  const text = await complete({
+  const raw = await complete({
     system:    SYSTEM,
     prompt:    walletContext
                  ? `User wallet context:\n${walletContext}\n\nUser input: ${userInput}`
                  : userInput,
-    maxTokens: 1024,
+    maxTokens: 2048,   // 1024 was too small — system prompt ~800 tokens + JSON response
+    jsonMode:  true,   // Groq: enforce json_object mode → no markdown fences ever
     // Parser always responds in English JSON — language instruction is NOT applied here
-    // The parsed language code is then used to localise downstream responses
   })
-  const cleaned = text.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim()
+
+  // Strip markdown fences defensively (Anthropic / Gemini may still add them)
+  const cleaned = raw
+    .replace(/^```(?:json)?\s*/i, '')   // handles ```json and plain ```
+    .replace(/\s*```\s*$/i, '')
+    .trim()
+
+  // 1. Try clean parse
   try {
     const parsed = JSON.parse(cleaned) as ParsedIntent
-    // Sanitise and normalise the detected language code
-    parsed.language = (parsed.language ?? 'en').toLowerCase().split('-')[0]  // "zh-TW" → "zh"
+    parsed.language = (parsed.language ?? 'en').toLowerCase().split('-')[0]
     return parsed
-  } catch {
-    // If parsing fails, return a safe fallback
-    throw new Error(`Intent parser returned invalid JSON: ${cleaned.slice(0, 200)}`)
+  } catch { /* fall through to repair */ }
+
+  // 2. Try to repair truncated JSON (token limit hit mid-field)
+  const repaired = repairJSON(cleaned)
+  if (repaired) {
+    repaired.language    = (repaired.language ?? 'en').toLowerCase().split('-')[0]
+    repaired.user_raw_input ??= userInput
+    repaired.confidence  ??= 0.5
+    repaired.inferred_steps ??= []
+    repaired.constraints ??= { max_slippage: null, risk_tolerance: 'medium', protocol_preference: null, conditional_trigger: null }
+    return repaired
   }
+
+  // 3. Hard failure — surface a clean error
+  throw new Error(`Intent parser returned invalid JSON: ${cleaned.slice(0, 200)}`)
 }
