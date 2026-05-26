@@ -57,15 +57,30 @@ async function tryAutoExecute(item: ScheduledIntent): Promise<void> {
   const privateKey = process.env.SUI_PRIVATE_KEY
   const label      = item.type === 'dca' ? 'DCA' : 'Scheduled swap'
   const fromToken  = item.token.toUpperCase()
-  const toToken    = (item.targetToken ?? 'USDC').toUpperCase()
+  // Prefer explicit targetToken, then fall back to the stored intent's output_goal
+  const toToken    = (item.targetToken ?? item.intent?.output_goal ?? 'USDC').toUpperCase()
   const amount     = item.amount
 
-  if (!privateKey) {
-    // No server key — send actionable alert for the user to approve manually
+  // Bail out silently for ghost records (informational intents stored by mistake)
+  if (!amount || amount <= 0 || !fromToken) {
     addAlert(item.wallet, {
       type:     'scheduled',
-      message:  `⏰ ${label} due: ${amount} ${fromToken}${toToken !== fromToken ? ` → ${toToken}` : ''}. Open Vektor to execute.`,
+      message:  `Skipped malformed scheduled entry (no amount/token). ID: ${item.id.slice(0, 8)}`,
       severity: 'info',
+    })
+    return
+  }
+
+  if (!privateKey) {
+    // No server key — send an actionable alert the UI can turn into a one-click execute
+    const actionText = item.type === 'dca'
+      ? `swap ${amount} ${fromToken} to ${toToken}`
+      : (item.intent?.user_raw_input ?? `swap ${amount} ${fromToken} to ${toToken}`)
+    addAlert(item.wallet, {
+      type:     'scheduled',
+      message:  `⏰ ${label} due: ${amount} ${fromToken} → ${toToken}. Tap Execute to confirm.`,
+      severity: 'info',
+      action:   actionText,
     })
     schedulerEvents.emit('due', item)
     return

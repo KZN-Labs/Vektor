@@ -231,7 +231,7 @@ function ConditionCard({ payload }: { payload: any }) {
   return (
     <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/5 p-5 space-y-3">
       <div className="flex items-center gap-2">
-        <span className="text-yellow-400">⚡</span>
+        <svg className="w-4 h-4 text-yellow-400 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4.5 13.5H11L10 22L19.5 10.5H13L13 2Z"/></svg>
         <span className="text-sm font-semibold text-white">Condition Armed</span>
       </div>
       <p className="text-xs text-slate-400 leading-relaxed">{c.description}</p>
@@ -468,22 +468,41 @@ function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
 interface AlertBannerProps {
   alerts:    any[]
   onDismiss: () => void
+  onExecute: (text: string) => void
 }
 
-function AlertBanner({ alerts, onDismiss }: AlertBannerProps) {
+function AlertBanner({ alerts, onDismiss, onExecute }: AlertBannerProps) {
   if (alerts.length === 0) return null
   const latest = alerts[alerts.length - 1]
   const color  = latest.severity === 'critical' ? 'border-red-500/40 bg-red-500/5 text-red-300'
                : latest.severity === 'warning'  ? 'border-yellow-500/40 bg-yellow-500/5 text-yellow-300'
                : 'border-purple-500/20 bg-purple-500/5 text-purple-300'
+
+  // Severity icon — no emoji, pure SVG
+  const Icon = latest.severity === 'critical'
+    ? () => <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20A10 10 0 0012 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+    : latest.severity === 'warning'
+    ? () => <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+    : () => <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M12 22a10 10 0 100-20 10 10 0 000 20zm1-7h-2v-6h2v6zm0-8h-2V5h2v2z"/></svg>
+
   return (
     <div className={`mx-4 mt-2 px-4 py-3 rounded-xl border flex items-start gap-3 ${color}`}>
-      <span className="text-sm shrink-0">{latest.severity === 'critical' ? '🚨' : '⚡'}</span>
-      <div className="flex-1">
+      <Icon />
+      <div className="flex-1 min-w-0">
         <p className="text-xs leading-relaxed">{latest.message}</p>
         {alerts.length > 1 && <p className="text-[10px] opacity-60 mt-1">+{alerts.length - 1} more alerts</p>}
       </div>
-      <button onClick={onDismiss} className="text-[10px] opacity-40 hover:opacity-80 shrink-0">✕</button>
+      <div className="flex items-center gap-2 shrink-0">
+        {latest.action && (
+          <button
+            onClick={() => { onExecute(latest.action); onDismiss() }}
+            className="text-[10px] font-semibold px-2 py-1 rounded bg-purple-600/30 hover:bg-purple-600/60 text-purple-200 transition-colors"
+          >
+            Execute
+          </button>
+        )}
+        <button onClick={onDismiss} className="text-[10px] opacity-40 hover:opacity-80">✕</button>
+      </div>
     </div>
   )
 }
@@ -901,7 +920,7 @@ export default function App() {
       </header>
 
       {/* ── Alert banner ────────────────────────────────────────────── */}
-      <AlertBanner alerts={alerts} onDismiss={() => setAlerts([])} />
+      <AlertBanner alerts={alerts} onDismiss={() => setAlerts([])} onExecute={(text) => sendMessage(text)} />
 
       {/* ── Body ────────────────────────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden">

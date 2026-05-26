@@ -14,6 +14,7 @@ export interface UserAlert {
   type:      'health_factor' | 'scheduled' | 'condition' | 'position' | 'yield' | 'general'
   message:   string
   severity:  'info' | 'warning' | 'critical'
+  action?:   string   // intent text to send when user clicks "Execute"
   seen:      boolean
   createdAt: string
 }

@@ -358,13 +358,25 @@ app.post('/api/intent', async (req, res) => {
     /* ── Schedule / DCA ───────────────────────────────────────────── */
 
     if (intent === 'schedule' || intent === 'dca') {
-      const token       = (parsed.input_asset ?? 'USDC').toUpperCase()
-      const targetToken = (parsed.output_goal ?? 'SUI').toUpperCase()
+      const token       = (parsed.input_asset ?? '').toUpperCase()
+      const targetToken = (parsed.output_goal ?? '').toUpperCase()
       const amount      = parsed.input_amount ?? 0
       const spec        = parsed.schedule
       const isDca       = intent === 'dca'
-      const nextRun     = calcNextRun(spec)
-      const totalRuns   = spec?.runs ?? (isDca ? 30 : 1)
+
+      // Guard: reject ghost records from informational queries ("what is DCA?")
+      if (!amount || amount <= 0 || !token) {
+        const mem = sender !== SIM_ADDR ? buildMemoryContext(sender) : ''
+        const msg = (await complete({
+          system: `You are Vektor, a DeFi financial OS for Sui. Be concise and helpful. ${mem}`,
+          prompt: text, maxTokens: 300, lang,
+        })).trim() || 'How can I help?'
+        res.json({ ok: true, intent_type: 'general', parsedIntent: parsed, language: lang, message: msg, actionLabel: '· VEKTOR' })
+        return
+      }
+
+      const nextRun   = calcNextRun(spec)
+      const totalRuns = spec?.runs ?? (isDca ? 30 : 1)
 
       const record = addScheduled({
         wallet:      sender,
@@ -372,7 +384,7 @@ app.post('/api/intent', async (req, res) => {
         intent:      parsed,
         amount,
         token,
-        targetToken: isDca ? targetToken : undefined,
+        targetToken: targetToken || undefined,   // store for all swap types, not just DCA
         recipient:   parsed.recipient ?? undefined,
         schedule: {
           frequency:    spec?.frequency ?? 'daily',
@@ -402,7 +414,7 @@ app.post('/api/intent', async (req, res) => {
         ok: true, intent_type: intent, parsedIntent: parsed,
         scheduled: record, language: lang,
         message:     scheduleMessage,
-        actionLabel: `· ${isDca ? 'DCA' : 'SCHEDULED'} · ${amount} ${token}${isDca ? ` → ${targetToken}` : ''} · ${freqLabel}`,
+        actionLabel: `· ${isDca ? 'DCA' : 'SCHEDULED'} · ${amount} ${token}${targetToken ? ` → ${targetToken}` : ''} · ${freqLabel}`,
       })
       return
     }
