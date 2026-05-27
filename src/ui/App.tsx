@@ -159,7 +159,7 @@ function PortfolioCard({ portfolio }: { portfolio: any }) {
   )
 }
 
-function NaviCard({ payload, intentType }: { payload: any; intentType: string }) {
+function NaviCard({ payload, intentType, onSign }: { payload: any; intentType: string; onSign?: () => void }) {
   const isLend   = intentType === 'lend'
   const isBorrow = intentType === 'borrow'
   const isRepay  = intentType === 'repay'
@@ -197,9 +197,17 @@ function NaviCard({ payload, intentType }: { payload: any; intentType: string })
       )}
       <p className="text-xs text-slate-500">
         {payload?.ptbB64
-          ? 'Transaction built — confirm below to sign.'
-          : 'Connect wallet to build and sign transaction.'}
+          ? 'Transaction ready — sign and execute below.'
+          : 'Transaction will be built on-chain before signing.'}
       </p>
+      {onSign && (
+        <button
+          onClick={onSign}
+          className="w-full py-2 rounded-lg bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/30 hover:border-purple-500/60 text-purple-300 text-xs font-semibold transition-colors"
+        >
+          Sign &amp; Execute on NAVI →
+        </button>
+      )}
     </div>
   )
 }
@@ -334,8 +342,47 @@ function PaymentCard({ payload, paymentId }: { payload: any; paymentId?: string 
 
 function GeneralCard({ message }: { message: string }) {
   return (
-    <div className="px-4 py-3 rounded-xl border border-white/5 bg-[#111118] text-sm text-slate-300 leading-relaxed">
+    <div className="px-4 py-3 rounded-xl border border-white/5 bg-[#111118] text-sm text-slate-300 leading-relaxed whitespace-pre-line">
       {message}
+    </div>
+  )
+}
+
+function TransactionHistoryCard({ txs }: { txs: any[] }) {
+  if (!txs || txs.length === 0) return null
+  return (
+    <div className="rounded-xl border border-white/5 bg-[#111118] p-5 space-y-3">
+      <p className="text-[10px] font-mono uppercase tracking-widest text-slate-500">Recent Transactions</p>
+      <div className="space-y-0">
+        {txs.slice(0, 8).map((tx: any, i: number) => (
+          <div key={i} className="flex items-center justify-between py-2.5 border-b border-white/5 last:border-0">
+            <div className="flex items-center gap-2.5">
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${tx.status === 'success' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+              <span className="text-xs text-slate-400 font-mono">
+                {tx.digest ? `${tx.digest.slice(0, 8)}…${tx.digest.slice(-4)}` : 'unknown'}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className={`text-[10px] font-mono ${tx.status === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
+                {tx.status}
+              </span>
+              <span className="text-[10px] text-slate-600">
+                {tx.timestamp ? new Date(tx.timestamp).toLocaleDateString() : ''}
+              </span>
+              {tx.digest && (
+                <a
+                  href={`https://suiscan.xyz/mainnet/tx/${tx.digest}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-purple-400 hover:text-purple-300 transition-colors"
+                >
+                  ↗
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -378,9 +425,11 @@ interface BubbleProps {
   msg:       ChatMessage
   onFix:     () => void
   onConfirm: () => void
+  onReset:   () => void
+  onSign:    () => void
 }
 
-function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
+function MessageBubble({ msg, onFix, onConfirm, onReset, onSign }: BubbleProps) {
   if (msg.role === 'user') {
     return (
       <div className="msg-in flex justify-end">
@@ -427,7 +476,7 @@ function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
           <div className="space-y-4">
             <PTBPreview parsedIntent={msg.guardData.parsedIntent} quote={msg.guardData.quote} originalText={msg.originalText ?? ''} />
             <GuardianReport report={msg.guardData.report} rewriting={msg.phase === 'rewriting'} wasRewritten={msg.phase === 'rewritten'} diff={msg.guardData.diff} onFix={onFix} />
-            <ConfirmationGate report={msg.guardData.report} quote={msg.guardData.quote} parsedIntent={msg.guardData.parsedIntent} state={msg.phase as AppState} onConfirm={onConfirm} onReset={() => {}} language={msg.language} />
+            <ConfirmationGate report={msg.guardData.report} quote={msg.guardData.quote} parsedIntent={msg.guardData.parsedIntent} state={msg.phase as AppState} onConfirm={onConfirm} onReset={onReset} language={msg.language} />
           </div>
         )
 
@@ -477,13 +526,40 @@ function MessageBubble({ msg, onFix, onConfirm }: BubbleProps) {
           )
         }
 
-        if (it === 'check_balance' || it === 'analyze_wallet') return <PortfolioCard portfolio={msg.payload?.portfolio} />
-        if (it === 'lend' || it === 'borrow' || it === 'repay') return (
+        if (it === 'check_balance') return <PortfolioCard portfolio={msg.payload?.portfolio} />
+        if (it === 'analyze_wallet') return (
           <div className="space-y-4">
-            <NaviCard payload={msg.payload} intentType={it} />
             {msg.text && <GeneralCard message={msg.text} />}
+            <PortfolioCard portfolio={msg.payload?.portfolio} />
           </div>
         )
+        if (it === 'transaction_history') return (
+          <div className="space-y-3">
+            {msg.text && <GeneralCard message={msg.text} />}
+            <TransactionHistoryCard txs={msg.payload?.txs ?? []} />
+          </div>
+        )
+        if (it === 'lend' || it === 'borrow' || it === 'repay') {
+          if (msg.executionDigest) return (
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-6 py-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-emerald-400 text-lg">✓</span>
+                <span className="text-white font-semibold text-sm capitalize">{it} executed on NAVI</span>
+              </div>
+              <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
+                <span>Digest:</span>
+                <span className="text-slate-300">{msg.executionDigest.slice(0, 12)}…{msg.executionDigest.slice(-6)}</span>
+                <a href={`https://suiscan.xyz/mainnet/tx/${msg.executionDigest}`} target="_blank" rel="noreferrer" className="text-purple-400 hover:text-purple-300 transition-colors">↗ Suiscan</a>
+              </div>
+            </div>
+          )
+          return (
+            <div className="space-y-4">
+              <NaviCard payload={msg.payload} intentType={it} onSign={onSign} />
+              {msg.text && <GeneralCard message={msg.text} />}
+            </div>
+          )
+        }
         if (it === 'schedule' || it === 'dca') return <ScheduledCard payload={msg.payload} />
         if (it === 'conditional') return <ConditionCard payload={msg.payload} />
         if (it === 'explain_transaction') return <ExplainCard payload={msg.payload} />
@@ -671,11 +747,21 @@ export default function App() {
       })
       .catch(() => {})
 
-    // Fetch pending alerts
-    fetch(`/api/alerts/${wallet}`)
-      .then(r => r.json())
-      .then(d => { if (d.ok && d.alerts.length) setAlerts(d.alerts) })
-      .catch(() => {})
+  }, [account?.address])
+
+  // Poll for new alerts every 30 s (so scheduled payment notifications appear without reload)
+  useEffect(() => {
+    if (!account) return
+    const wallet = account.address
+    const poll = () => {
+      fetch(`/api/alerts/${wallet}`)
+        .then(r => r.json())
+        .then(d => { if (d.ok && d.alerts.length) setAlerts(prev => [...prev, ...d.alerts]) })
+        .catch(() => {})
+    }
+    poll() // fetch immediately on connect
+    const interval = setInterval(poll, 30_000)
+    return () => clearInterval(interval)
   }, [account?.address])
 
   function autoResize(el: HTMLTextAreaElement) {
@@ -797,6 +883,80 @@ export default function App() {
     }
   }
 
+  /* ── Reset (cancel gate back to review) ──────────────────────────── */
+  function handleReset(msgId: string) {
+    setMessages(prev => prev.map(m =>
+      m.id === msgId ? { ...m, phase: 'review' as const } : m
+    ))
+  }
+
+  /* ── Sign NAVI transaction ────────────────────────────────────────── */
+  async function handleNaviSign(msgId: string) {
+    const msg = messages.find(m => m.id === msgId)
+    if (!msg?.payload || !account) return
+
+    const intentType = msg.intentType ?? 'lend'
+    const token  = (msg.payload.parsedIntent?.input_asset ?? 'SUI').toUpperCase()
+    const amount = msg.payload.parsedIntent?.input_amount ?? 0
+
+    setMessages(prev => prev.map(m =>
+      m.id === msgId ? { ...m, actionLabel: '· AWAITING · WALLET' } : m
+    ))
+
+    try {
+      let ptbB64 = msg.payload.ptbB64 as string | null
+
+      if (!ptbB64) {
+        // Build fresh PTB from server
+        const res = await fetch('/api/navi-ptb', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ type: intentType, token, amount, sender: account.address }),
+        })
+        const json = await res.json()
+        if (!json.ok) throw new Error(json.error ?? 'Failed to build NAVI transaction')
+        ptbB64 = json.ptbB64 as string
+      }
+
+      // Decode base64 → Uint8Array → Transaction
+      const bytes = Uint8Array.from(atob(ptbB64!).split('').map(c => c.charCodeAt(0)))
+      const tx    = Transaction.from(bytes)
+
+      signAndExecuteTransaction(
+        { transaction: tx },
+        {
+          onSuccess: (result) => {
+            setMessages(prev => prev.map(m =>
+              m.id === msgId ? {
+                ...m,
+                actionLabel:     `· EXECUTED · NAVI`,
+                executionDigest: result.digest,
+              } : m
+            ))
+            setTimeout(refreshPortfolio, 3000)
+          },
+          onError: (error) => {
+            setMessages(prev => prev.map(m =>
+              m.id === msgId ? {
+                ...m,
+                actionLabel: '· FAILED',
+                text: `Transaction failed: ${error.message ?? 'rejected by wallet'}`,
+              } : m
+            ))
+          },
+        }
+      )
+    } catch (err: any) {
+      setMessages(prev => prev.map(m =>
+        m.id === msgId ? {
+          ...m,
+          actionLabel: '· ERROR',
+          text: err.message ?? 'NAVI execution failed.',
+        } : m
+      ))
+    }
+  }
+
   /* ── Fix (rewrite PTB) ────────────────────────────────────────────── */
   async function handleFix(msgId: string) {
     const msg = messages.find(m => m.id === msgId)
@@ -911,13 +1071,18 @@ export default function App() {
               onClick={() => setWalletOpen(o => !o)}
               className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-[#111118] text-sm text-slate-300 hover:border-purple-500/40 hover:text-white transition-colors font-mono"
             >
-              {suiBalance && (
+              {portfolio?.totalUsd != null ? (
+                <>
+                  <span className="text-slate-300">${portfolio.totalUsd.toFixed(2)}</span>
+                  <span className="text-white/20 select-none">·</span>
+                </>
+              ) : suiBalance ? (
                 <>
                   <img src="/sui.svg" alt="SUI" className="w-4 h-4 shrink-0" />
                   <span className="text-slate-300">{suiBalance} SUI</span>
                   <span className="text-white/20 select-none">·</span>
                 </>
-              )}
+              ) : null}
               <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
               <span>{walletLabel}</span>
             </button>
@@ -1027,6 +1192,8 @@ export default function App() {
                   msg={msg}
                   onFix={() => handleFix(msg.id)}
                   onConfirm={() => handleConfirm(msg.id)}
+                  onReset={() => handleReset(msg.id)}
+                  onSign={() => handleNaviSign(msg.id)}
                 />
               ))}
 

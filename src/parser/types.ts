@@ -21,6 +21,8 @@ export type IntentType =
   | 'check_balance'
   | 'check_positions'
   | 'check_health_factor'
+  | 'check_price'
+  | 'transaction_history'
 
 export interface ScheduleSpec {
   frequency:      'daily' | 'weekly' | 'monthly' | 'once'

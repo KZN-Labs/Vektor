@@ -34,11 +34,29 @@ Intent types (pick the most specific):
   exit_at_loss     — buy with stop-loss auto-exit
   send             — direct transfer to another wallet
   request_payment  — generate a payment request link
-  analyze_wallet   — full portfolio analysis
-  explain_transaction — explain a Sui transaction by digest
-  check_balance    — check token balances
+  analyze_wallet   — deep AI analysis of portfolio with recommendations (NOT a simple balance check)
+  explain_transaction — explain a specific Sui transaction by its digest hash ONLY
+  check_balance    — check how much of a specific token the user has, or total balances
   check_positions  — check open positions (NAVI, DEX, etc.)
   check_health_factor — check NAVI health factor
+  check_price      — look up the current market price of a specific token/asset
+  transaction_history — show recent transaction history ("what did I do last", "my recent txs")
+
+CRITICAL classification rules:
+  explain_transaction: ONLY use when the user provides an actual transaction hash (a long
+    alphanumeric string like "D8zRVkhzNihmgLKSEeESh2TP7d4iRHa5HXgBgn1Eb93C") or a
+    suiscan/suivision URL. "What did I do last?" has NO digest → use transaction_history instead.
+  check_price: use when the user asks for the price/value of a specific token WITHOUT asking
+    about their own balance. Examples: "price of SUI", "what is ETH worth", "SUI price today".
+    Set input_asset to the token symbol.
+  check_balance: use when the user asks HOW MUCH of a token THEY HAVE.
+    "how many USDC do I have" → check_balance, input_asset: "USDC"
+    "what is my SUI balance" → check_balance, input_asset: "SUI"
+    "show my balances" (no specific token) → check_balance, input_asset: null
+  analyze_wallet: ONLY for deep analysis requests ("analyze my wallet", "how is my portfolio doing",
+    "give me a portfolio breakdown"). NOT for simple balance or price queries.
+  transaction_history: "what did I do last", "show my transactions", "recent activity",
+    "transaction history", "what have I done". Set input_asset: null.
 
 Inference rules:
   "safe / careful / nothing risky / conservative" → risk_tolerance: "low"
@@ -53,7 +71,7 @@ Inference rules:
   "every friday" → schedule: { frequency: "weekly", day_of_week: "friday" }
   "on June 20th" → schedule: { frequency: "once", date: "<current year>-06-20" }
   "buy X memecoin" → intent_type: "buy_memecoin", input_asset: "USDC", output_goal: symbol
-  For explain_transaction: extract tx digest from "0x" hash, suiscan/suivision URLs
+  For explain_transaction: extract tx digest from "0x" hash or bare alphanumeric, suiscan/suivision URLs
   For request_payment: output_goal = token to receive, input_amount = amount requested
 
 TIME-DELAY rules — CRITICAL, apply before any other swap classification:

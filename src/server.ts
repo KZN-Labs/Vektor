@@ -176,25 +176,114 @@ app.post('/api/intent', async (req, res) => {
 
     /* ── READ-ONLY intents ────────────────────────────────────────── */
 
-    if (intent === 'check_balance' || intent === 'analyze_wallet') {
-      const portfolio = await fetchPortfolio(sender)
+    if (intent === 'check_balance') {
+      const portfolio  = await fetchPortfolio(sender)
       if (sender !== SIM_ADDR) updatePortfolioSnapshot(sender, portfolio)
+      const filterToken = parsed.input_asset?.toUpperCase() ?? null
+
+      // If a specific token was asked about, highlight just that one
+      if (filterToken) {
+        const match = portfolio.balances.find(b => b.symbol.toUpperCase() === filterToken)
+        const balStr = match ? `${match.formatted} ${match.symbol} (~$${match.usdValue?.toFixed(2) ?? '0.00'})` : `0 ${filterToken}`
+        const msgEn  = `You have ${balStr}.`
+        const message = lang === 'en' ? msgEn : await complete({
+          system: 'You are Vektor. Translate this balance result exactly, keeping numbers and token symbols unchanged.',
+          prompt: msgEn, maxTokens: 80, lang,
+        }).catch(() => msgEn)
+        res.json({
+          ok: true, intent_type: intent, parsedIntent: parsed,
+          portfolio, language: lang,
+          message,
+          actionLabel: `· BALANCE · ${balStr}`,
+        })
+        return
+      }
+
+      // No specific token — show full portfolio card
       const totalStr = `$${portfolio.totalUsd.toFixed(2)}`
       const assets   = portfolio.balances.slice(0, 5).map(b => `${b.symbol} ${b.formatted}`).join(', ')
-
-      // Generate localised portfolio summary
-      const message = await complete({
-        system:    'You are Vektor, a DeFi assistant on Sui. Give a concise 1-2 sentence portfolio summary.',
-        prompt:    `Total value: ${totalStr}. Holdings: ${assets || 'none'}. ${portfolio.navi ? `NAVI health factor: ${portfolio.navi.healthFactor?.toFixed(2) ?? 'n/a'}.` : ''}`,
-        maxTokens: 200,
-        lang,
-      }).catch(() => `Portfolio: ${totalStr} total. Holdings: ${assets || 'none detected'}.`)
-
+      const message  = await complete({
+        system: 'You are Vektor, a DeFi assistant on Sui. Give a concise 1-2 sentence balance summary.',
+        prompt: `Total value: ${totalStr}. Holdings: ${assets || 'none'}.`,
+        maxTokens: 150, lang,
+      }).catch(() => `Total portfolio: ${totalStr}. Holdings: ${assets || 'none detected'}.`)
       res.json({
         ok: true, intent_type: intent, parsedIntent: parsed,
-        portfolio, language: lang,
-        message,
-        actionLabel: `· PORTFOLIO · ${totalStr}`,
+        portfolio, language: lang, message,
+        actionLabel: `· BALANCE · ${totalStr}`,
+      })
+      return
+    }
+
+    if (intent === 'analyze_wallet') {
+      const portfolio = await fetchPortfolio(sender)
+      if (sender !== SIM_ADDR) updatePortfolioSnapshot(sender, portfolio)
+      const totalStr  = `$${portfolio.totalUsd.toFixed(2)}`
+      const assets    = portfolio.balances.map(b => `${b.symbol}: ${b.formatted} ($${b.usdValue?.toFixed(2)})`).join(', ')
+      const naviInfo  = portfolio.navi
+        ? `NAVI: supplied ${JSON.stringify(portfolio.navi.supplyBalances)}, borrowed ${JSON.stringify(portfolio.navi.borrowBalances)}, HF ${portfolio.navi.healthFactor?.toFixed(2)}`
+        : 'No NAVI positions'
+
+      const message = await complete({
+        system: 'You are Vektor, a DeFi portfolio analyst on Sui. Analyze the user\'s portfolio and give 3-5 specific, actionable recommendations. Mention yield opportunities, risk factors, and diversification. Be concise but specific.',
+        prompt: `Wallet: ${sender.slice(0, 8)}…\nTotal: ${totalStr}\nHoldings: ${assets || 'none'}\n${naviInfo}`,
+        maxTokens: 400, lang,
+      }).catch(() => `Portfolio value: ${totalStr}. ${assets || 'No tokens detected'}.`)
+      res.json({
+        ok: true, intent_type: intent, parsedIntent: parsed,
+        portfolio, language: lang, message,
+        actionLabel: `· ANALYSIS · ${totalStr}`,
+      })
+      return
+    }
+
+    if (intent === 'check_price') {
+      const token  = (parsed.input_asset ?? '').toUpperCase()
+      if (!token) {
+        res.json({ ok: false, error: 'Which token price would you like to check?', language: lang })
+        return
+      }
+      const prices = getAllPrices()
+      const price  = prices[token]
+      const msgEn  = price != null
+        ? `${token} is currently trading at $${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD.`
+        : `Price for ${token} is not available in the live feed. Try SUI, USDC, USDT, WETH, or WBTC.`
+      const message = lang === 'en' ? msgEn : await complete({
+        system: 'You are Vektor. Translate this price result exactly, keeping numbers and token symbols unchanged.',
+        prompt: msgEn, maxTokens: 80, lang,
+      }).catch(() => msgEn)
+      res.json({
+        ok: true, intent_type: intent, parsedIntent: parsed,
+        price, token, language: lang, message,
+        actionLabel: `· PRICE · ${token}${price != null ? ` · $${price.toFixed(4)}` : ' · N/A'}`,
+      })
+      return
+    }
+
+    if (intent === 'transaction_history') {
+      const portfolio = await fetchPortfolio(sender)
+      const txs = portfolio.recentTxs ?? []
+      if (txs.length === 0) {
+        const msgEn = 'No recent transactions found for this wallet.'
+        const message = lang === 'en' ? msgEn : await complete({
+          system: 'You are Vektor. Translate this message exactly.',
+          prompt: msgEn, maxTokens: 60, lang,
+        }).catch(() => msgEn)
+        res.json({ ok: true, intent_type: intent, parsedIntent: parsed, txs: [], language: lang, message, actionLabel: '· HISTORY · NONE' })
+        return
+      }
+      const txSummary = txs.slice(0, 8).map((t: any, i: number) =>
+        `${i + 1}. ${t.kind ?? 'tx'} — ${t.status} — ${new Date(t.timestamp).toLocaleString()}`
+      ).join('\n')
+      const msgEn   = `Here are your ${Math.min(txs.length, 8)} most recent transactions:\n${txSummary}`
+      const message = lang === 'en' ? msgEn : await complete({
+        system: 'You are Vektor. Translate this transaction history summary, keeping dates and status labels unchanged.',
+        prompt: msgEn, maxTokens: 300, lang,
+      }).catch(() => msgEn)
+      res.json({
+        ok: true, intent_type: intent, parsedIntent: parsed,
+        txs, language: lang, message,
+        actionLabel: `· HISTORY · ${txs.length} TXS`,
       })
       return
     }
@@ -766,6 +855,31 @@ app.post('/api/payment/:id/pay', (req, res) => {
   if (payment.status === 'paid') { res.json({ ok: true, payment }); return }
   fulfillPayment(req.params.id, paidBy ?? 'unknown')
   res.json({ ok: true, payment: { ...payment, status: 'paid' } })
+})
+
+/* ─── NAVI PTB builder — builds deposit/borrow/repay tx for wallet signing ─── */
+
+app.post('/api/navi-ptb', async (req, res) => {
+  try {
+    const { type, token, amount, sender } = req.body as { type: string; token: string; amount: number; sender: string }
+    if (!type || !token || !amount || !sender) {
+      res.status(400).json({ ok: false, error: 'Missing required fields: type, token, amount, sender' }); return
+    }
+    let ptbB64: string
+    if (type === 'lend') {
+      ptbB64 = await buildDepositPTB(sender, token, amount)
+    } else if (type === 'borrow') {
+      ptbB64 = await buildBorrowPTB(sender, token, amount)
+    } else if (type === 'repay') {
+      ptbB64 = await buildRepayPTB(sender, token, amount)
+    } else {
+      res.status(400).json({ ok: false, error: `Unknown NAVI operation type: ${type}` }); return
+    }
+    res.json({ ok: true, ptbB64 })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
 })
 
 /* ─── PTB builder — returns serialized tx bytes for wallet signing ─── */
