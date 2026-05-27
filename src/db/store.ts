@@ -120,6 +120,11 @@ export function getAllScheduled(): ScheduledIntent[] {
   return load().scheduled.filter(s => s.active)
 }
 
+/** Find a scheduled intent by ID regardless of active/inactive status. */
+export function getScheduledById(id: string): ScheduledIntent | undefined {
+  return load().scheduled.find(s => s.id === id)
+}
+
 export function cancelScheduled(id: string): boolean {
   const store = load()
   const idx   = store.scheduled.findIndex(s => s.id === id)

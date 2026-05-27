@@ -24,7 +24,7 @@ import { getHealthFactor, getNaviPositions, getPoolRates,
 import { explainTransaction }   from './explainer/index.js'
 import { createPaymentRequest, getPaymentStatus, fulfillPayment } from './payments/index.js'
 import {
-  addScheduled, getScheduled, cancelScheduled,
+  addScheduled, getScheduled, cancelScheduled, getAllScheduled, getScheduledById,
   addCondition, getConditions, cancelCondition,
   getPositions, addPosition, cancelCondition as removeCondition,
 } from './db/store.js'
@@ -876,6 +876,82 @@ app.post('/api/navi-ptb', async (req, res) => {
       res.status(400).json({ ok: false, error: `Unknown NAVI operation type: ${type}` }); return
     }
     res.json({ ok: true, ptbB64 })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+/* ─── Execute a scheduled swap — builds Guardian-reviewed quote for signing ── */
+// Called by the UI when the user clicks Execute on a scheduler alert.
+// Looks up the schedule by ID, runs Routex + Guardian, returns a swap response
+// identical to /api/intent so the existing ConfirmationGate flow handles signing.
+
+app.post('/api/execute-scheduled/:id', async (req, res) => {
+  try {
+    const { senderAddress } = req.body as { senderAddress?: string }
+    const sender = senderAddress || SIM_ADDR
+
+    // Use getScheduledById — looks up by ID regardless of active status because
+    // markScheduledRun() already deactivated it before the alert was created.
+    const scheduled = getScheduledById(req.params.id)
+    if (!scheduled) {
+      res.status(404).json({ ok: false, error: 'Scheduled intent not found' }); return
+    }
+
+    const fromToken  = scheduled.token.toUpperCase()
+    const toToken    = (scheduled.targetToken ?? scheduled.intent?.output_goal ?? 'USDC').toUpperCase()
+    const amount     = scheduled.amount
+    const lang       = sender !== SIM_ADDR ? getPreferredLanguage(sender) : 'en'
+
+    // Balance check before hitting Routex
+    if (sender !== SIM_ADDR) {
+      const actual = await getTokenBalance(sender, fromToken).catch(() => Infinity)
+      if (actual < amount) {
+        const errEn = `Insufficient ${fromToken} balance for scheduled swap. You have ${actual.toFixed(4)} ${fromToken} but need ${amount} ${fromToken}.`
+        const errMsg = lang === 'en' ? errEn : await complete({
+          system: 'You are Vektor. Translate this error message exactly, keeping token symbols and numbers unchanged.',
+          prompt: errEn, maxTokens: 80, lang,
+        }).catch(() => errEn)
+        res.json({ ok: false, error: errMsg, language: lang }); return
+      }
+    }
+
+    const amountIn = toBaseUnits(amount, fromToken)
+    const routex   = new Routex('mainnet', sender)
+    const quote    = await routex.getQuote({
+      from:              fromToken,
+      to:                toToken,
+      amount:            amountIn,
+      slippageTolerance: scheduled.intent?.constraints?.max_slippage ?? 0.005,
+      senderAddress:     sender,
+    })
+
+    const quoteWithSym = { ...quote, fromSymbol: fromToken, toSymbol: toToken }
+    const report       = await runGuardian(quoteWithSym, sender, null, lang)
+
+    // Return the same shape as /api/intent swap response so the UI can render
+    // PTBPreview + GuardianReport + ConfirmationGate directly.
+    res.json({
+      ok:          true,
+      intent_type: 'swap',
+      parsedIntent: scheduled.intent ?? {
+        input_asset: fromToken, output_goal: toToken, input_amount: amount,
+        constraints: { max_slippage: 0.005, risk_tolerance: 'medium', protocol_preference: null, conditional_trigger: null },
+      },
+      quote:      serializeQuote(quoteWithSym, fromToken, toToken),
+      report:     serializeReport(report),
+      _rawReport: report,
+      language:   lang,
+      quoteParams: {
+        from:     fromToken,
+        to:       toToken,
+        amountIn: amountIn.toString(),
+        slippage: scheduled.intent?.constraints?.max_slippage ?? 0.005,
+        sender,
+      },
+      actionLabel: `· SCHEDULED SWAP · ${fromToken} → ${toToken} · SCORE ${report.score}/100`,
+    })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     res.status(500).json({ ok: false, error: msg })

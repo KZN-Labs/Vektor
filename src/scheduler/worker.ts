@@ -72,15 +72,13 @@ async function tryAutoExecute(item: ScheduledIntent): Promise<void> {
   }
 
   if (!privateKey) {
-    // No server key — send an actionable alert the UI can turn into a one-click execute
-    const actionText = item.type === 'dca'
-      ? `swap ${amount} ${fromToken} to ${toToken}`
-      : (item.intent?.user_raw_input ?? `swap ${amount} ${fromToken} to ${toToken}`)
+    // No server key — send an actionable alert carrying the schedule ID so the UI
+    // can call /api/execute-scheduled/:id instead of re-parsing raw text.
     addAlert(item.wallet, {
       type:     'scheduled',
-      message:  `⏰ ${label} due: ${amount} ${fromToken} → ${toToken}. Tap Execute to confirm.`,
+      message:  `⏰ ${label} due: ${amount} ${fromToken} → ${toToken}. Tap Execute to review & sign.`,
       severity: 'info',
-      action:   actionText,
+      action:   `__EXEC__:${item.id}`,   // UI detects this prefix → calls execute-scheduled endpoint
     })
     schedulerEvents.emit('due', item)
     return

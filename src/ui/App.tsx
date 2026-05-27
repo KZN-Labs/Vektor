@@ -883,6 +883,58 @@ export default function App() {
     }
   }
 
+  /* ── Execute a due scheduled swap — calls /api/execute-scheduled/:id ─ */
+  async function executeScheduled(scheduleId: string) {
+    if (!account) return
+
+    const vektorMsgId = crypto.randomUUID()
+    setIsLoading(true)
+    setMessages(prev => [
+      ...prev,
+      { id: vektorMsgId, role: 'vektor', loading: true, actionLabel: '· SCHEDULED SWAP · PREPARING' },
+    ])
+
+    try {
+      const res  = await fetch(`/api/execute-scheduled/${scheduleId}`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ senderAddress: account.address }),
+      })
+      const json = await res.json()
+      if (!json.ok) throw new Error(json.error ?? 'Failed to prepare scheduled swap')
+
+      // Render exactly like a normal swap — Guardian report + ConfirmationGate
+      setMessages(prev => prev.map(m =>
+        m.id === vektorMsgId
+          ? {
+              ...m,
+              loading:      false,
+              language:     json.language ?? 'en',
+              actionLabel:  json.actionLabel,
+              originalText: `Scheduled: ${json.parsedIntent?.input_asset} → ${json.parsedIntent?.output_goal}`,
+              intentType:   'swap',
+              guardData: {
+                parsedIntent: json.parsedIntent,
+                quote:        json.quote,
+                report:       json.report,
+                _rawReport:   json._rawReport,
+                quoteParams:  json.quoteParams,
+              },
+              phase: 'review' as const,
+            }
+          : m,
+      ))
+    } catch (err: any) {
+      setMessages(prev => prev.map(m =>
+        m.id === vektorMsgId
+          ? { ...m, loading: false, actionLabel: '· ERROR', text: err.message ?? 'Scheduled swap preparation failed', intentType: 'error' }
+          : m,
+      ))
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   /* ── Reset (cancel gate back to review) ──────────────────────────── */
   function handleReset(msgId: string) {
     setMessages(prev => prev.map(m =>
@@ -1119,7 +1171,18 @@ export default function App() {
       </header>
 
       {/* ── Alert banner ────────────────────────────────────────────── */}
-      <AlertBanner alerts={alerts} onDismiss={() => setAlerts([])} onExecute={(text) => sendMessage(text)} />
+      <AlertBanner
+        alerts={alerts}
+        onDismiss={() => setAlerts([])}
+        onExecute={(action) => {
+          if (action.startsWith('__EXEC__:')) {
+            // Scheduled swap alert — route to Guardian review flow, not intent re-parse
+            executeScheduled(action.slice('__EXEC__:'.length))
+          } else {
+            sendMessage(action)
+          }
+        }}
+      />
 
       {/* ── Body ────────────────────────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden">
