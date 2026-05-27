@@ -114,9 +114,21 @@ export interface RecentTx {
   status:    'success' | 'failure'
 }
 
+/** Fetch all coins with one automatic retry — handles flaky RPC on page reload. */
+async function fetchAllCoinsWithRetry(wallet: string) {
+  const result = await client.getAllCoins({ owner: wallet })
+  // If we got back an empty array but the wallet could plausibly have funds,
+  // wait 1.5 s and try once more (common on first load after page refresh).
+  if (result.data.length === 0) {
+    await new Promise(r => setTimeout(r, 1500))
+    return client.getAllCoins({ owner: wallet })
+  }
+  return result
+}
+
 export async function fetchPortfolio(wallet: string): Promise<PortfolioSnapshot> {
   const [allCoins, prices, recentTxs] = await Promise.allSettled([
-    client.getAllCoins({ owner: wallet }),
+    fetchAllCoinsWithRetry(wallet),
     fetchPricesUsd(),
     client.queryTransactionBlocks({
       filter:  { FromAddress: wallet },

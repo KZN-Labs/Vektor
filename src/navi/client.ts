@@ -77,6 +77,24 @@ export async function getPoolRates(symbol: string) {
   }
 }
 
+/* ─── Minimum deposit / borrow amounts ──────────────────────────────────── */
+
+const NAVI_MIN: Record<string, number> = {
+  SUI:  0.001,
+  USDC: 0.01,
+  USDT: 0.01,
+}
+
+function checkMinAmount(action: string, symbol: string, amount: number) {
+  const min = NAVI_MIN[symbol.toUpperCase()] ?? 0.001
+  if (amount < min) {
+    throw new Error(
+      `Amount too small for NAVI ${action}. Minimum is ${min} ${symbol.toUpperCase()} ` +
+      `(you entered ${amount} ${symbol.toUpperCase()}).`
+    )
+  }
+}
+
 /* ─── PTB builders ──────────────────────────────────────────────────────── */
 
 /** Build a deposit (supply) PTB. Returns serialized tx bytes as base64. */
@@ -87,6 +105,7 @@ export async function buildDepositPTB(
 ): Promise<string> {
   const coinInfo = COIN_INFO[symbol.toUpperCase()]
   if (!coinInfo) throw new Error(`Unsupported NAVI token: ${symbol}`)
+  checkMinAmount('deposit', symbol, amount)
 
   const decimals  = COIN_DECIMALS[symbol.toUpperCase()] ?? 1e9
   const amountRaw = Math.round(amount * decimals)
@@ -111,6 +130,7 @@ export async function buildBorrowPTB(
 ): Promise<string> {
   const coinInfo = COIN_INFO[symbol.toUpperCase()]
   if (!coinInfo) throw new Error(`Unsupported NAVI token: ${symbol}`)
+  checkMinAmount('borrow', symbol, amount)
 
   const decimals  = COIN_DECIMALS[symbol.toUpperCase()] ?? 1e9
   const amountRaw = Math.round(amount * decimals)
@@ -133,6 +153,7 @@ export async function buildRepayPTB(
 ): Promise<string> {
   const coinInfo = COIN_INFO[symbol.toUpperCase()]
   if (!coinInfo) throw new Error(`Unsupported NAVI token: ${symbol}`)
+  checkMinAmount('repay', symbol, amount)
 
   const decimals  = COIN_DECIMALS[symbol.toUpperCase()] ?? 1e9
   const amountRaw = Math.round(amount * decimals)

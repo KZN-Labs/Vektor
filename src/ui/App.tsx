@@ -108,6 +108,23 @@ function Spinner({ size = 4 }: { size?: number }) {
 
 /* ─── Rich intent cards ──────────────────────────────────────────────────── */
 
+function PriceCard({ token, price, message }: { token: string; price: number | null; message: string }) {
+  return (
+    <div className="rounded-xl border border-purple-500/20 bg-purple-500/5 px-6 py-5 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-slate-400 text-xs uppercase tracking-widest font-medium">{token} · Market Price</span>
+      </div>
+      {price != null ? (
+        <p className="text-3xl font-bold text-white font-mono">
+          ${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+        </p>
+      ) : (
+        <p className="text-slate-400 text-sm">{message}</p>
+      )}
+    </div>
+  )
+}
+
 function PortfolioCard({ portfolio }: { portfolio: any }) {
   if (!portfolio) return null
   return (
@@ -526,7 +543,16 @@ function MessageBubble({ msg, onFix, onConfirm, onReset, onSign }: BubbleProps) 
           )
         }
 
-        if (it === 'check_balance') return <PortfolioCard portfolio={msg.payload?.portfolio} />
+        if (it === 'check_balance') {
+          // Single-token query: show the focused balance text, then the full card below
+          if (msg.text) return (
+            <div className="space-y-4">
+              <GeneralCard message={msg.text} />
+              <PortfolioCard portfolio={msg.payload?.portfolio} />
+            </div>
+          )
+          return <PortfolioCard portfolio={msg.payload?.portfolio} />
+        }
         if (it === 'analyze_wallet') return (
           <div className="space-y-4">
             {msg.text && <GeneralCard message={msg.text} />}
@@ -560,6 +586,13 @@ function MessageBubble({ msg, onFix, onConfirm, onReset, onSign }: BubbleProps) 
             </div>
           )
         }
+        if (it === 'check_price') return (
+          <PriceCard
+            token={msg.payload?.token ?? ''}
+            price={msg.payload?.price ?? null}
+            message={msg.text ?? ''}
+          />
+        )
         if (it === 'schedule' || it === 'dca') return <ScheduledCard payload={msg.payload} />
         if (it === 'conditional') return <ConditionCard payload={msg.payload} />
         if (it === 'explain_transaction') return <ExplainCard payload={msg.payload} />
