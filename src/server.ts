@@ -157,17 +157,19 @@ app.post('/api/intent', async (req, res) => {
     const intent  = parsed.intent_type
 
     // ── Language detection ───────────────────────────────────────────────
-    // Parser returns detected language. Fall back to stored preference, then 'en'.
+    // Parser returns detected language. 'en' is NOT in SUPPORTED_LANGS (it's the default),
+    // so we handle it explicitly to prevent stale non-English preferences from bleeding in.
     const rawLang = (parsed as any).language as string | undefined
-    const lang = (rawLang && SUPPORTED_LANGS.has(rawLang)) ? rawLang
-               : (sender !== SIM_ADDR ? getPreferredLanguage(sender) : 'en')
+    const lang = rawLang === 'en'               ? 'en'                                // parser says English → always English
+               : (rawLang && SUPPORTED_LANGS.has(rawLang)) ? rawLang               // parser detected supported language
+               : (sender !== SIM_ADDR ? getPreferredLanguage(sender) : 'en')       // fallback to stored preference
 
     // Register wallet for monitoring
     if (sender !== SIM_ADDR) {
       registerWallet(sender)
       incrementIntentCount(sender)
       logIntent(sender, { type: intent, summary: text.slice(0, 120), status: 'success' })
-      // Persist language preference (only saves if changed)
+      // Persist language preference — always overwrite so stale non-English prefs get cleared
       setPreferredLanguage(sender, lang)
       // Bump registry on swap/memecoin types
       const swapTypes = ['swap', 'compound', 'rebalance', 'buy_memecoin', 'sell_memecoin', 'exit_at_profit', 'exit_at_loss']
@@ -727,27 +729,50 @@ app.post('/api/rewrite', async (req, res) => {
     // Bump registry
     bumpRegistry('total_rewrites')
 
+    const origScore    = rawReport.score ?? 0
+    const rewriteScore = rewritten.score ?? 0
+    const improved     = rewriteScore > origScore + 2  // require at least 3-point improvement
+
     // Build before/after diff for the UI
     const origQ = rawReport.originalQuote ?? {}
     const diff  = {
       before: {
-        score:      rawReport.score ?? 0,
-        amountOut:  origQ.amountOut  ?? '0',
+        score:       origScore,
+        amountOut:   origQ.amountOut   ?? '0',
         priceImpact: origQ.priceImpact ?? 0,
-        route:      (origQ.route ?? []).map((s: any) => s.protocol),
+        route:       (origQ.route ?? []).map((s: any) => s.protocol),
       },
       after: {
-        score:      rewritten.score ?? 0,
-        amountOut:  q.amountOut  ?? '0',
+        score:       rewriteScore,
+        amountOut:   q.amountOut   ?? '0',
         priceImpact: q.priceImpact ?? 0,
-        route:      (q.route ?? []).map((s: any) => s.protocol),
+        route:       (q.route ?? []).map((s: any) => s.protocol),
       },
     }
 
+    // If rewrite produced no meaningful improvement, tell the user instead of
+    // showing a misleading "BEFORE/AFTER" comparison with identical scores.
+    if (!improved) {
+      const reason = rewritten.flags
+        .filter((f: any) => f.severity !== 'green')
+        .map((f: any) => f.title)
+        .join(', ') || 'route complexity'
+      res.json({
+        ok:       true,
+        improved: false,
+        message:  `This route is already optimal — ${from}→${to} only has one viable path on Sui. ` +
+                  `The score of ${origScore}/100 reflects inherent risk from ${reason}, not a bad routing choice. ` +
+                  `You can still proceed by acknowledging the risk below.`,
+        diff,
+      })
+      return
+    }
+
     res.json({
-      ok: true,
-      quote:      serializeQuote({ ...q, fromSymbol: from, toSymbol: to }, from, to),
-      report:     serializeReport(rewritten),
+      ok:       true,
+      improved: true,
+      quote:    serializeQuote({ ...q, fromSymbol: from, toSymbol: to }, from, to),
+      report:   serializeReport(rewritten),
       _rawReport: rewritten,
       diff,
     })

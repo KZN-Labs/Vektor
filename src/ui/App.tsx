@@ -16,7 +16,8 @@ interface GuardData {
   report:       any
   _rawReport:   any
   quoteParams?: { from: string; to: string; amountIn: string; slippage: number; sender: string }
-  diff?:        any  // before/after rewrite comparison
+  diff?:        any     // before/after rewrite comparison
+  rewriteNote?: string  // set when rewrite produced no improvement
 }
 
 interface ChatMessage {
@@ -493,6 +494,11 @@ function MessageBubble({ msg, onFix, onConfirm, onReset, onSign }: BubbleProps) 
           <div className="space-y-4">
             <PTBPreview parsedIntent={msg.guardData.parsedIntent} quote={msg.guardData.quote} originalText={msg.originalText ?? ''} />
             <GuardianReport report={msg.guardData.report} rewriting={msg.phase === 'rewriting'} wasRewritten={msg.phase === 'rewritten'} diff={msg.guardData.diff} onFix={onFix} />
+            {msg.guardData.rewriteNote && (
+              <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-sm text-yellow-300/80">
+                ⚠ {msg.guardData.rewriteNote}
+              </div>
+            )}
             <ConfirmationGate report={msg.guardData.report} quote={msg.guardData.quote} parsedIntent={msg.guardData.parsedIntent} state={msg.phase as AppState} onConfirm={onConfirm} onReset={onReset} language={msg.language} />
           </div>
         )
@@ -968,10 +974,19 @@ export default function App() {
     }
   }
 
-  /* ── Reset (cancel gate back to review) ──────────────────────────── */
+  /* ── Cancel — dismiss the confirmation gate entirely ──────────────── */
   function handleReset(msgId: string) {
     setMessages(prev => prev.map(m =>
-      m.id === msgId ? { ...m, phase: 'review' as const } : m
+      m.id === msgId
+        ? {
+            ...m,
+            guardData:   undefined,       // hides PTBPreview + GuardianReport + ConfirmationGate
+            phase:       undefined,
+            text:        'Transaction cancelled.',
+            intentType:  'general',
+            actionLabel: '· CANCELLED',
+          }
+        : m
     ))
   }
 
@@ -1058,9 +1073,19 @@ export default function App() {
       const json = await res.json()
       if (!json.ok) throw new Error(json.error)
 
+      // Route already optimal — no improvement possible, tell the user and restore review state
+      if (json.improved === false) {
+        setMessages(prev => prev.map(m =>
+          m.id === msgId
+            ? { ...m, phase: 'review' as const, guardData: { ...m.guardData!, diff: json.diff ?? null, rewriteNote: json.message } }
+            : m,
+        ))
+        return
+      }
+
       setMessages(prev => prev.map(m =>
         m.id === msgId
-          ? { ...m, phase: 'rewritten' as const, actionLabel: buildRewriteLabel(json.quote, json.report), guardData: { ...m.guardData!, quote: json.quote, report: json.report, _rawReport: json._rawReport, diff: json.diff ?? null } }
+          ? { ...m, phase: 'rewritten' as const, actionLabel: buildRewriteLabel(json.quote, json.report), guardData: { ...m.guardData!, quote: json.quote, report: json.report, _rawReport: json._rawReport, diff: json.diff ?? null, rewriteNote: undefined } }
           : m,
       ))
     } catch {
