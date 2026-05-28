@@ -1186,13 +1186,12 @@ export default function App() {
                   <span className="text-slate-300">${portfolio.totalUsd.toFixed(2)}</span>
                   <span className="text-white/20 select-none">·</span>
                 </>
-              ) : suiBalance ? (
+              ) : (
                 <>
-                  <img src="/sui.svg" alt="SUI" className="w-4 h-4 shrink-0" />
-                  <span className="text-slate-300">{suiBalance} SUI</span>
+                  <span className="w-12 h-3 rounded bg-white/10 animate-pulse inline-block" />
                   <span className="text-white/20 select-none">·</span>
                 </>
-              ) : null}
+              )}
               <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
               <span>{walletLabel}</span>
             </button>
