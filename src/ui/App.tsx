@@ -727,13 +727,17 @@ export default function App() {
 
     const wallet = account.address
 
-    // Fetch portfolio
+    // Live portfolio fetch — only update state if we got real balances back (not an empty/failed response)
     fetch('/api/portfolio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet }) })
       .then(r => r.json())
-      .then(d => { if (d.ok) setPortfolio(d.portfolio) })
+      .then(d => {
+        if (d.ok && (d.portfolio.balances?.length > 0 || d.portfolio.totalUsd > 0)) {
+          setPortfolio(d.portfolio)
+        }
+      })
       .catch(() => {})
 
-    // Feature 4: Proactive welcome back message with DCA progress, prices, HF
+    // Memory: use stored snapshot instantly while live fetch runs, and build welcome message
     fetch(`/api/memory/${wallet}`)
       .then(r => r.json())
       .then(d => {
@@ -741,6 +745,11 @@ export default function App() {
         const mem          = d.memory
         const dcaSummary   = d.dcaSummary  ?? []
         const priceContext = d.priceContext ?? {}
+
+        // Pre-fill portfolio from memory snapshot so balance shows immediately
+        if (mem.portfolioSnapshot?.balances?.length > 0) {
+          setPortfolio(prev => prev ?? mem.portfolioSnapshot)
+        }
 
         if (messages.length === 0) {
           const parts: string[] = []
@@ -812,7 +821,12 @@ export default function App() {
     if (!account) return
     fetch('/api/portfolio', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet: account.address }) })
       .then(r => r.json())
-      .then(d => { if (d.ok) setPortfolio(d.portfolio) })
+      .then(d => {
+        // Only update if we got real data — never overwrite a good portfolio with an empty one
+        if (d.ok && (d.portfolio.balances?.length > 0 || d.portfolio.totalUsd > 0)) {
+          setPortfolio(d.portfolio)
+        }
+      })
       .catch(() => {})
   }, [account])
 
@@ -1181,7 +1195,7 @@ export default function App() {
               onClick={() => setWalletOpen(o => !o)}
               className="flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-[#111118] text-sm text-slate-300 hover:border-purple-500/40 hover:text-white transition-colors font-mono"
             >
-              {portfolio?.totalUsd != null ? (
+              {portfolio != null && (portfolio.balances?.length > 0 || portfolio.totalUsd > 0) ? (
                 <>
                   <span className="text-slate-300">${portfolio.totalUsd.toFixed(2)}</span>
                   <span className="text-white/20 select-none">·</span>

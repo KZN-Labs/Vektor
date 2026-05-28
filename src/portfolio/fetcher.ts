@@ -114,20 +114,57 @@ export interface RecentTx {
   status:    'success' | 'failure'
 }
 
-/** Fetch all coins with one automatic retry — handles flaky RPC on page reload. */
+/** Fetch coins with fast retry — up to 3 attempts with 300ms gaps. */
 async function fetchAllCoinsWithRetry(wallet: string) {
-  const result = await client.getAllCoins({ owner: wallet })
-  // If we got back an empty array but the wallet could plausibly have funds,
-  // wait 1.5 s and try once more (common on first load after page refresh).
-  if (result.data.length === 0) {
-    await new Promise(r => setTimeout(r, 1500))
-    return client.getAllCoins({ owner: wallet })
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 300))
+    try {
+      const result = await client.getAllCoins({ owner: wallet })
+      if (result.data.length > 0) return result
+    } catch { /* try again */ }
   }
-  return result
+  // Last attempt — return whatever we get (may be empty)
+  return client.getAllCoins({ owner: wallet })
+}
+
+/** Fetch NAVI positions with a hard 4-second timeout. */
+async function fetchNaviPositions(wallet: string): Promise<PortfolioSnapshot['navi']> {
+  try {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('NAVI timeout')), 4000)
+    )
+    const portfolio = await Promise.race([
+      getAddressPortfolio(wallet, false, client as any),
+      timeout,
+    ]) as Map<string, { supplyBalance: number; borrowBalance: number }>
+
+    let healthFactor: number | null = null
+    try {
+      const hfRes = await Promise.race([
+        getHealthFactorCall(wallet, client as any),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('HF timeout')), 3000)),
+      ])
+      healthFactor = typeof hfRes === 'number' ? hfRes : null
+    } catch { /* ignore */ }
+
+    const supplyBalances: Record<string, number> = {}
+    const borrowBalances: Record<string, number> = {}
+    for (const [symbol, data] of portfolio) {
+      if (data.supplyBalance > 0) supplyBalances[symbol] = data.supplyBalance
+      if (data.borrowBalance > 0) borrowBalances[symbol] = data.borrowBalance
+    }
+    if (Object.keys(supplyBalances).length > 0 || Object.keys(borrowBalances).length > 0) {
+      return { supplyBalances, borrowBalances, healthFactor }
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
 }
 
 export async function fetchPortfolio(wallet: string): Promise<PortfolioSnapshot> {
-  const [allCoins, prices, recentTxs] = await Promise.allSettled([
+  // Run everything in parallel — NAVI and tx history no longer block balance display.
+  const [allCoins, prices, recentTxs, naviResult] = await Promise.allSettled([
     fetchAllCoinsWithRetry(wallet),
     fetchPricesUsd(),
     client.queryTransactionBlocks({
@@ -136,11 +173,13 @@ export async function fetchPortfolio(wallet: string): Promise<PortfolioSnapshot>
       limit:   20,
       order:   'descending',
     }),
+    fetchNaviPositions(wallet),
   ])
 
-  const coins   = allCoins.status  === 'fulfilled' ? allCoins.value.data   : []
-  const priceMap = prices.status   === 'fulfilled' ? prices.value           : {}
-  const txData   = recentTxs.status === 'fulfilled' ? recentTxs.value.data  : []
+  const coins    = allCoins.status   === 'fulfilled' ? allCoins.value.data  : []
+  const priceMap = prices.status     === 'fulfilled' ? prices.value          : {}
+  const txData   = recentTxs.status  === 'fulfilled' ? recentTxs.value.data : []
+  const navi     = naviResult.status === 'fulfilled' ? naviResult.value      : undefined
 
   // Aggregate by coin type
   const aggregated = new Map<string, bigint>()
@@ -152,39 +191,16 @@ export async function fetchPortfolio(wallet: string): Promise<PortfolioSnapshot>
   const balances: TokenBalance[] = []
   for (const [coinType, raw] of aggregated) {
     const known    = KNOWN_COINS[coinType]
-    // For unknown coins: extract symbol from coinType (e.g. "::usdc::USDC" → "USDC")
     const symbol   = known?.symbol ?? coinType.split('::').pop() ?? coinType.slice(0, 6)
-    const decimals = known?.decimals ?? 9  // default 9 for unknown
+    const decimals = known?.decimals ?? 9
     const formatted = (Number(raw) / 10 ** decimals).toFixed(decimals >= 9 ? 4 : 6)
     const usdValue  = Number(formatted) * (priceMap[symbol] ?? 0)
-    // Skip dust (< 0.000001 of any token)
     if (Number(formatted) < 0.000001) continue
     balances.push({ coinType, symbol, raw: raw.toString(), formatted, usdValue })
   }
 
   balances.sort((a, b) => b.usdValue - a.usdValue)
   const totalUsd = balances.reduce((s, b) => s + b.usdValue, 0)
-
-  // NAVI positions
-  let navi: PortfolioSnapshot['navi'] = undefined
-  try {
-    const portfolio = await getAddressPortfolio(wallet, false, client as any)
-    let healthFactor: number | null = null
-    try {
-      const hfRes = await getHealthFactorCall(wallet, client as any)
-      healthFactor = typeof hfRes === 'number' ? hfRes : null
-    } catch { /* ignore */ }
-
-    const supplyBalances: Record<string, number> = {}
-    const borrowBalances: Record<string, number> = {}
-    for (const [symbol, data] of portfolio) {
-      if (data.supplyBalance > 0) supplyBalances[symbol] = data.supplyBalance
-      if (data.borrowBalance > 0) borrowBalances[symbol] = data.borrowBalance
-    }
-    if (Object.keys(supplyBalances).length > 0 || Object.keys(borrowBalances).length > 0) {
-      navi = { supplyBalances, borrowBalances, healthFactor }
-    }
-  } catch { /* NAVI not available, skip */ }
 
   const recentTxList: RecentTx[] = txData.map((tx: any) => ({
     digest:    tx.digest,
