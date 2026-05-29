@@ -1419,39 +1419,82 @@ app.get('/api/walrus/health', async (_, res) => {
 /* ─── Voice transcription — POST /api/transcribe ─────────────────────── */
 // Accepts audio blob (webm/mp4/wav), returns transcribed text via Whisper.
 // Audio is NOT stored anywhere — transcribed and discarded immediately.
+//
+// NOTE: multer middleware is invoked manually inside the async handler so that
+// upload errors (wrong content-type, size limit, parse failure) are caught and
+// returned as JSON instead of falling through to Express's HTML error handler.
 
-app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
+app.post('/api/transcribe', async (req, res) => {
+  // ── Step 1: run multer, guarantee JSON error on failure ──────────────
   try {
-    if (!req.file) { res.status(400).json({ ok: false, error: 'audio file required' }); return }
+    await new Promise<void>((resolve, reject) =>
+      upload.single('audio')(req as any, res as any, (err: unknown) =>
+        err ? reject(err) : resolve()
+      )
+    )
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(400).json({ ok: false, error: `Upload error: ${msg}` })
+    return
+  }
+
+  // ── Step 2: transcribe ────────────────────────────────────────────────
+  try {
+    if (!req.file) {
+      res.status(400).json({ ok: false, error: 'No audio file received. Make sure the field name is "audio".' })
+      return
+    }
 
     const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) { res.status(503).json({ ok: false, error: 'OPENAI_API_KEY not configured' }); return }
+    if (!apiKey) {
+      res.status(503).json({ ok: false, error: 'OPENAI_API_KEY not configured on server.' })
+      return
+    }
 
     const { default: OpenAI } = await import('openai')
     const openai = new OpenAI({ apiKey })
 
-    // Detect user language for better transcription accuracy
-    const wallet = (req.body as any).wallet as string | undefined
-    const lang   = wallet ? getPreferredLanguage(wallet) : 'en'
+    const wallet  = (req.body as any).wallet   as string | undefined
+    const langHint = (req.body as any).language as string | undefined
+    const lang    = langHint || (wallet ? getPreferredLanguage(wallet) : undefined)
 
-    // Build a File from the buffer for the OpenAI SDK
     const mimeType = req.file.mimetype || 'audio/webm'
-    const ext      = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('wav') ? 'wav' : 'webm'
-    const audioFile = new File([req.file.buffer], `audio.${ext}`, { type: mimeType })
+    const ext      = mimeType.includes('mp4') ? 'm4a'
+                   : mimeType.includes('ogg') ? 'ogg'
+                   : mimeType.includes('wav') ? 'wav'
+                   : 'webm'
+
+    // multer memoryStorage gives req.file.buffer (Buffer).
+    // If for any reason buffer is absent (stream-based multer variant), read it.
+    let fileBuffer: Buffer
+    if (req.file.buffer) {
+      fileBuffer = req.file.buffer
+    } else if ((req.file as any).stream) {
+      const chunks: Buffer[] = []
+      for await (const chunk of (req.file as any).stream) chunks.push(chunk as Buffer)
+      fileBuffer = Buffer.concat(chunks)
+    } else {
+      res.status(500).json({ ok: false, error: 'Audio buffer unavailable — check multer storage config.' })
+      return
+    }
+
+    if (fileBuffer.length < 100) {
+      res.status(400).json({ ok: false, error: 'Audio too short or empty.' })
+      return
+    }
+
+    const audioFile = new File([fileBuffer], `voice.${ext}`, { type: mimeType })
 
     const transcription = await openai.audio.transcriptions.create({
-      file:     audioFile,
-      model:    'whisper-1',
-      language: lang !== 'en' ? lang : undefined,  // auto-detect for English
+      file:            audioFile,
+      model:           'whisper-1',
+      language:        lang && lang !== 'en' ? lang : undefined,
       response_format: 'text',
     })
 
-    const text = typeof transcription === 'string' ? transcription.trim() : (transcription as any).text?.trim() ?? ''
-
-    // If language was auto-detected (lang was 'en'), Whisper may have detected a different language.
-    // We don't have that info in 'text' format — use 'verbose_json' to get it next time if needed.
-
+    const text = (typeof transcription === 'string' ? transcription : (transcription as any).text ?? '').trim()
     res.json({ ok: true, text })
+
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     res.status(500).json({ ok: false, error: `Transcription failed: ${msg}` })

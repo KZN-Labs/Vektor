@@ -80,9 +80,11 @@ export function MicButton({ onTranscription, disabled, languageHint, wallet }: M
         const blob  = new Blob(chunksRef.current, { type: mimeType || 'audio/webm' })
         chunksRef.current = []
 
-        if (blob.size < 1000) {
-          // Too short — likely silence
-          setState('idle')
+        if (blob.size < 500) {
+          // Too short — likely silence or immediate release
+          setErrMsg('Recording too short — hold longer.')
+          setState('error')
+          setTimeout(() => setState('idle'), 2500)
           return
         }
 
@@ -92,16 +94,23 @@ export function MicButton({ onTranscription, disabled, languageHint, wallet }: M
           if (languageHint) form.append('language', languageHint)
           if (wallet)       form.append('wallet', wallet)
 
-          const res  = await fetch('/api/transcribe', { method: 'POST', body: form })
+          const res = await fetch('/api/transcribe', { method: 'POST', body: form })
+
+          // Guard against HTML error pages (multer errors, server crashes, etc.)
+          const contentType = res.headers.get('content-type') ?? ''
+          if (!contentType.includes('application/json')) {
+            throw new Error(`Server error (${res.status}) — check OPENAI_API_KEY in .env`)
+          }
+
           const json = await res.json()
-          if (!json.ok || !json.text?.trim()) throw new Error(json.error ?? 'Empty transcription')
+          if (!json.ok || !json.text?.trim()) throw new Error(json.error ?? 'Empty transcription — speak closer to the mic')
 
           setState('idle')
           onTranscription(json.text.trim())
         } catch (err: any) {
           setErrMsg(err.message ?? 'Transcription failed')
           setState('error')
-          setTimeout(() => setState('idle'), 2000)
+          setTimeout(() => setState('idle'), 4000)   // 4 s — long enough to read the error
         }
       }
 
@@ -115,7 +124,7 @@ export function MicButton({ onTranscription, disabled, languageHint, wallet }: M
       stopStream()
       setErrMsg(err.name === 'NotAllowedError' ? 'Microphone access denied.' : 'Could not start recording.')
       setState('error')
-      setTimeout(() => setState('idle'), 2000)
+      setTimeout(() => setState('idle'), 4000)
     }
   }
 
@@ -185,9 +194,9 @@ export function MicButton({ onTranscription, disabled, languageHint, wallet }: M
         )}
       </button>
 
-      {/* Tooltip for error */}
+      {/* Error tooltip — always visible in error state, hover-visible otherwise */}
       {isError && errMsg && (
-        <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-red-300 bg-[#1a0a0a] border border-red-500/20 rounded-md px-2 py-1 pointer-events-none">
+        <div className="absolute bottom-full mb-2 right-0 max-w-[200px] text-[10px] text-red-300 bg-[#1a0808] border border-red-500/30 rounded-lg px-2.5 py-1.5 pointer-events-none leading-snug z-50 shadow-lg">
           {errMsg}
         </div>
       )}
