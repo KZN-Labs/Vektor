@@ -1394,7 +1394,7 @@ export default function App() {
               </div>
             )}
           </div>
-          </div>  {/* end flex items-center gap-2 wrapper */}
+          </div>
         ) : (
           <ConnectModal
             trigger={
