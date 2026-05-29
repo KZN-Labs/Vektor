@@ -37,7 +37,7 @@
     "groq-sdk": "^1.2.0",
     "navi-sdk": "^1.7.3",
     "node-cron": "^4.2.1",
-    "routex-sui": "^1.0.0",
+    "routex-sui": "^1.1.1",
     "uuid": "^11.1.0"
   },
   "devDependencies": {
