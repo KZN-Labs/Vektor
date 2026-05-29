@@ -743,6 +743,62 @@ function AlertBanner({ alerts, onDismiss, onExecute }: AlertBannerProps) {
   )
 }
 
+/* ─── Slash commands definition ─────────────────────────────────────────── */
+
+const SLASH_COMMANDS = [
+  { cmd: '/contact add ',    hint: '[name] [0x address]',          label: 'Save a contact',             icon: '＋' },
+  { cmd: '/contact list',    hint: '',                              label: 'List your contacts',          icon: '≡' },
+  { cmd: '/contact remove ', hint: '[name]',                        label: 'Remove a contact',            icon: '✕' },
+  { cmd: '/group create ',   hint: '[name] with [alice, bob, ...]', label: 'Create a payment group',     icon: '◈' },
+  { cmd: '/group list',      hint: '',                              label: 'List your groups',            icon: '≡' },
+  { cmd: '/group show ',     hint: '[name]',                        label: 'Show group members',          icon: '◉' },
+  { cmd: '/group add ',      hint: '[group] [name] [0x address]',   label: 'Add member to a group',      icon: '＋' },
+  { cmd: '/pay ',            hint: '[name] [amount] [token]',       label: 'Pay a saved contact',        icon: '➤' },
+  { cmd: '/split ',          hint: '[amount] [token] among [group]',label: 'Split payment across group', icon: '⊣' },
+  { cmd: '/batch ',          hint: '[amount] [token] to [group]',   label: 'Pay everyone in a group',    icon: '⊢' },
+]
+
+interface SlashMenuProps {
+  filter:   string
+  onSelect: (cmd: string) => void
+  onClose:  () => void
+}
+
+function SlashMenu({ filter, onSelect, onClose }: SlashMenuProps) {
+  const matches = SLASH_COMMANDS.filter(c =>
+    c.cmd.toLowerCase().startsWith(filter.toLowerCase()) ||
+    c.label.toLowerCase().includes(filter.slice(1).toLowerCase())
+  )
+  if (matches.length === 0) return null
+
+  return (
+    <div className="absolute bottom-full mb-2 left-0 right-0 bg-[#111118] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-30">
+      <div className="px-3 py-2 border-b border-white/5 flex items-center justify-between">
+        <span className="text-[9px] font-mono uppercase tracking-widest text-slate-600">Commands</span>
+        <button onClick={onClose} className="text-[10px] text-slate-700 hover:text-slate-400">✕</button>
+      </div>
+      <div className="max-h-64 overflow-y-auto">
+        {matches.map(c => (
+          <button
+            key={c.cmd}
+            onClick={() => onSelect(c.cmd)}
+            className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-purple-500/10 transition-colors text-left group"
+          >
+            <span className="text-purple-400 text-xs w-4 shrink-0 text-center">{c.icon}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm text-white font-mono">{c.cmd.trim()}</span>
+                {c.hint && <span className="text-xs text-slate-600 truncate">{c.hint}</span>}
+              </div>
+              <p className="text-[10px] text-slate-500 group-hover:text-slate-400 transition-colors">{c.label}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /* ─── Main App ───────────────────────────────────────────────────────────── */
 
 export default function App() {
@@ -784,6 +840,7 @@ export default function App() {
   const [isLoading,       setIsLoading]       = useState(false)
   const [incomingPayment, setIncomingPayment] = useState<any>(null) // from ?pay= URL param
   const [contactsOpen,    setContactsOpen]    = useState(false)
+  const [showSlashMenu,   setShowSlashMenu]   = useState(false)
 
   const abortRef       = useRef<AbortController | null>(null)
   const textareaRef    = useRef<HTMLTextAreaElement>(null)
@@ -1520,6 +1577,19 @@ export default function App() {
               </div>
 
               <div className="relative">
+                {/* Slash commands popup */}
+                {showSlashMenu && account && (
+                  <SlashMenu
+                    filter={input}
+                    onSelect={(cmd) => {
+                      setInput(cmd)
+                      setShowSlashMenu(false)
+                      textareaRef.current?.focus()
+                    }}
+                    onClose={() => setShowSlashMenu(false)}
+                  />
+                )}
+
                 {!account && (
                   <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-[#0a0a0f]/60 backdrop-blur-sm z-10 pointer-events-none">
                     <span className="text-sm text-slate-500">Connect wallet to start</span>
@@ -1529,8 +1599,21 @@ export default function App() {
                   <textarea
                     ref={textareaRef}
                     value={input}
-                    onChange={e => { setInput(e.target.value); autoResize(e.target) }}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input) } }}
+                    onChange={e => {
+                      const v = e.target.value
+                      setInput(v)
+                      autoResize(e.target)
+                      // Show slash menu when input starts with /
+                      setShowSlashMenu(v.startsWith('/') && v.length <= 40)
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Escape') { setShowSlashMenu(false); return }
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        setShowSlashMenu(false)
+                        sendMessage(input)
+                      }
+                    }}
                     disabled={!account || isLoading}
                     placeholder={isLoading ? 'Processing…' : PLACEHOLDER}
                     rows={1}
