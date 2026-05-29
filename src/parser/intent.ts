@@ -41,6 +41,11 @@ Intent types (pick the most specific):
   check_health_factor — check NAVI health factor
   check_price      — look up the current market price of a specific token/asset
   transaction_history — show recent transaction history ("what did I do last", "my recent txs")
+  contact_payment  — pay a named contact: "pay mum 50 USDC", "send John 0.5 SUI". Set recipient_name to the name.
+  batch_payment    — pay all members of a named group: "pay my staff 500 USDC each", "pay all contractors 150 USDC". Set group_name.
+  split_payment    — split an amount among a named group: "split 1000 USDC among my staff". Set group_name.
+  manage_contacts  — /contact add, /contact remove, /contact list — extract the subcommand in inferred_steps
+  manage_groups    — /group create, /group add, /group list — extract the subcommand in inferred_steps
 
 CRITICAL classification rules:
   explain_transaction: ONLY use when the user provides an actual transaction hash (a long
@@ -73,6 +78,11 @@ Inference rules:
   "buy X memecoin" → intent_type: "buy_memecoin", input_asset: "USDC", output_goal: symbol
   For explain_transaction: extract tx digest from "0x" hash or bare alphanumeric, suiscan/suivision URLs
   For request_payment: output_goal = token to receive, input_amount = amount requested
+  For contact_payment: recipient_name = the person's name (not a wallet address), input_asset = token, input_amount = amount
+  For batch_payment: group_name = the group name, input_asset = token, input_amount = amount per person (set per_person: true for "each")
+  For split_payment: group_name = the group name, input_asset = token, input_amount = total amount to split
+  For manage_contacts: inferred_steps[0] = "add"|"remove"|"list", inferred_steps[1] = name, inferred_steps[2] = address (for add)
+  For manage_groups: inferred_steps[0] = "create"|"add"|"remove"|"list"|"show", inferred_steps[1] = group name, inferred_steps[2..] = member names
 
 TIME-DELAY rules — CRITICAL, apply before any other swap classification:
   Any phrase containing a time delay ("in X minutes", "in X hours", "in X seconds",
@@ -121,7 +131,10 @@ Return exactly this JSON shape:
   },
   "inferred_steps": string[],
   "user_raw_input": string,
-  "confidence":    number between 0 and 1
+  "confidence":    number between 0 and 1,
+  "recipient_name": string or null (contact name when paying a saved contact by name, not an 0x address),
+  "group_name":     string or null (group name for batch_payment or split_payment),
+  "per_person":     boolean or null (true when "each" / "per person", false when splitting total)
 }`
 
 /**

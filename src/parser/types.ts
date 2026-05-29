@@ -15,6 +15,9 @@ export type IntentType =
   | 'exit_at_profit'
   | 'exit_at_loss'
   | 'send'
+  | 'contact_payment'   // "pay mum 50 USDC" — recipient_name resolved from contacts
+  | 'batch_payment'     // "pay my staff 500 USDC each" — group_name resolved from contacts
+  | 'split_payment'     // "split 1000 USDC among my staff"
   | 'request_payment'
   | 'analyze_wallet'
   | 'explain_transaction'
@@ -23,6 +26,8 @@ export type IntentType =
   | 'check_health_factor'
   | 'check_price'
   | 'transaction_history'
+  | 'manage_contacts'   // /contact add/remove/list
+  | 'manage_groups'     // /group create/add/list
 
 export interface ScheduleSpec {
   frequency:      'daily' | 'weekly' | 'monthly' | 'once'
@@ -56,4 +61,8 @@ export interface ParsedIntent {
   inferred_steps: string[]
   user_raw_input: string
   confidence:     number
+  // Contact / group extras
+  recipient_name?: string | null  // contact name when recipient is not a raw address
+  group_name?:     string | null  // group name for batch/split payments
+  per_person?:     boolean        // true for "X each", false for "split equally"
 }

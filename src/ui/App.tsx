@@ -5,6 +5,8 @@ import { PTBPreview }       from './PTBPreview'
 import { GuardianReport }   from './GuardianReport'
 import { ConfirmationGate } from './ConfirmationGate'
 import { Sidebar }          from './Sidebar'
+import { ContactsPage }     from './ContactsPage'
+import { MicButton }        from './MicButton'
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 
@@ -366,6 +368,54 @@ function GeneralCard({ message }: { message: string }) {
   )
 }
 
+function BatchPaymentCard({ payload, onSign }: { payload: any; onSign?: () => void }) {
+  const bd = payload?.batchData
+  if (!bd) return null
+  const isSplit = payload?.intent_type === 'split_payment'
+  return (
+    <div className="rounded-xl border border-white/5 bg-[#111118] p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={`text-[10px] font-mono uppercase tracking-widest ${isSplit ? 'text-blue-400' : 'text-purple-400'}`}>
+            {isSplit ? '· SPLIT PAYMENT' : '· BATCH PAYMENT'}
+          </span>
+        </div>
+        <span className="text-xs font-semibold text-white">
+          {bd.totalAmount} {bd.token}
+        </span>
+      </div>
+      <div className="space-y-1.5 max-h-48 overflow-y-auto">
+        {(bd.members ?? []).map((m: any, i: number) => (
+          <div key={i} className="flex items-center justify-between text-xs px-2 py-1.5 rounded-lg bg-white/[0.03]">
+            <div className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-purple-600/20 text-purple-400 text-[9px] font-bold flex items-center justify-center shrink-0">
+                {m.name?.[0]?.toUpperCase() ?? '?'}
+              </span>
+              <span className="text-slate-300">{m.name}</span>
+            </div>
+            <div className="text-right">
+              <span className="text-white font-mono">{m.amount ?? bd.amountPerPerson} {bd.token}</span>
+              <p className="text-[9px] text-slate-600 font-mono">{m.address?.slice(0, 8)}…</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between text-[10px] text-slate-600 pt-1 border-t border-white/5">
+        <span>{bd.members?.length ?? 0} recipients · 1 atomic transaction</span>
+        <span className="text-white/40">{bd.token}</span>
+      </div>
+      {onSign && (
+        <button
+          onClick={onSign}
+          className="w-full py-2 rounded-lg bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/30 hover:border-purple-500/60 text-purple-300 text-xs font-semibold transition-colors"
+        >
+          Sign &amp; Execute Batch →
+        </button>
+      )}
+    </div>
+  )
+}
+
 function TransactionHistoryCard({ txs }: { txs: any[] }) {
   if (!txs || txs.length === 0) return null
   return (
@@ -440,14 +490,15 @@ function execT(lang: string | undefined): ExecStrings {
 /* ─── Message bubble ──────────────────────────────────────────────────────── */
 
 interface BubbleProps {
-  msg:       ChatMessage
-  onFix:     () => void
-  onConfirm: () => void
-  onReset:   () => void
-  onSign:    () => void
+  msg:          ChatMessage
+  onFix:        () => void
+  onConfirm:    () => void
+  onReset:      () => void
+  onSign:       () => void
+  onBatchSign:  () => void
 }
 
-function MessageBubble({ msg, onFix, onConfirm, onReset, onSign }: BubbleProps) {
+function MessageBubble({ msg, onFix, onConfirm, onReset, onSign, onBatchSign }: BubbleProps) {
   if (msg.role === 'user') {
     return (
       <div className="msg-in flex justify-end">
@@ -604,6 +655,42 @@ function MessageBubble({ msg, onFix, onConfirm, onReset, onSign }: BubbleProps) 
         if (it === 'explain_transaction') return <ExplainCard payload={msg.payload} />
         if (it === 'request_payment') return <PaymentCard payload={msg.payload} paymentId={msg.payload?.payment?.id} />
 
+        if (it === 'batch_payment' || it === 'split_payment') {
+          // After execution
+          if (msg.executionDigest) return (
+            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-6 py-5 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-emerald-400 text-lg">✓</span>
+                <span className="text-white font-semibold text-sm">
+                  {it === 'split_payment' ? 'Split payment' : 'Batch payment'} executed
+                </span>
+              </div>
+              <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
+                <span>Digest:</span>
+                <span className="text-slate-300">{msg.executionDigest.slice(0, 12)}…{msg.executionDigest.slice(-6)}</span>
+                <a href={`https://suiscan.xyz/mainnet/tx/${msg.executionDigest}`} target="_blank" rel="noreferrer" className="text-purple-400 hover:text-purple-300 transition-colors">↗ Suiscan</a>
+              </div>
+            </div>
+          )
+          if (msg.executionError) return (
+            <div className="rounded-xl border border-red-500/25 bg-red-500/5 px-6 py-5 space-y-2">
+              <div className="flex items-center gap-2"><span className="text-red-400">✕</span><span className="text-white font-semibold text-sm">Batch payment failed</span></div>
+              <p className="text-xs text-red-300/70">{msg.executionError}</p>
+            </div>
+          )
+          return (
+            <div className="space-y-4">
+              <BatchPaymentCard payload={msg.payload} onSign={onBatchSign} />
+              {msg.text && <GeneralCard message={msg.text} />}
+            </div>
+          )
+        }
+
+        if (it === 'manage_contacts' || it === 'manage_groups') {
+          if (msg.text) return <GeneralCard message={msg.text} />
+          return null
+        }
+
         // Default text card
         if (msg.text) return <GeneralCard message={msg.text} />
         return null
@@ -696,6 +783,7 @@ export default function App() {
   const [alerts,          setAlerts]          = useState<any[]>([])
   const [isLoading,       setIsLoading]       = useState(false)
   const [incomingPayment, setIncomingPayment] = useState<any>(null) // from ?pay= URL param
+  const [contactsOpen,    setContactsOpen]    = useState(false)
 
   const abortRef       = useRef<AbortController | null>(null)
   const textareaRef    = useRef<HTMLTextAreaElement>(null)
@@ -1071,6 +1159,72 @@ export default function App() {
     }
   }
 
+  /* ── Batch / Split payment sign ──────────────────────────────────── */
+  async function handleBatchSign(msgId: string) {
+    const msg = messages.find(m => m.id === msgId)
+    if (!msg?.payload?.batchData || !account) return
+
+    const bd = msg.payload.batchData
+
+    setMessages(prev => prev.map(m =>
+      m.id === msgId ? { ...m, actionLabel: '· BUILDING · BATCH PTB' } : m
+    ))
+
+    try {
+      const res  = await fetch('/api/batch-payment-ptb', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          senderAddress:   account.address,
+          members:         bd.members,
+          amountPerPerson: bd.amountPerPerson,
+          token:           bd.token,
+        }),
+      })
+      const json = await res.json()
+      if (!json.ok) throw new Error(json.error ?? 'Failed to build batch PTB')
+
+      const tx = Transaction.from(json.ptbJson)
+
+      setMessages(prev => prev.map(m =>
+        m.id === msgId ? { ...m, actionLabel: '· AWAITING · WALLET' } : m
+      ))
+
+      signAndExecuteTransaction(
+        { transaction: tx },
+        {
+          onSuccess: (result) => {
+            setMessages(prev => prev.map(m =>
+              m.id === msgId ? {
+                ...m,
+                actionLabel:     '· EXECUTED · BATCH',
+                executionDigest: result.digest,
+              } : m
+            ))
+            setTimeout(refreshPortfolio, 3000)
+          },
+          onError: (error) => {
+            setMessages(prev => prev.map(m =>
+              m.id === msgId ? {
+                ...m,
+                actionLabel:    '· FAILED',
+                executionError: error.message ?? 'Transaction rejected.',
+              } : m
+            ))
+          },
+        }
+      )
+    } catch (err: any) {
+      setMessages(prev => prev.map(m =>
+        m.id === msgId ? {
+          ...m,
+          actionLabel: '· ERROR',
+          text:        err.message ?? 'Batch payment failed.',
+        } : m
+      ))
+    }
+  }
+
   /* ── Fix (rewrite PTB) ────────────────────────────────────────────── */
   async function handleFix(msgId: string) {
     const msg = messages.find(m => m.id === msgId)
@@ -1190,6 +1344,18 @@ export default function App() {
         </div>
 
         {account ? (
+          <div className="flex items-center gap-2">
+            {/* Contacts button */}
+            <button
+              onClick={() => setContactsOpen(true)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg border border-white/8 bg-[#111118] text-slate-500 hover:border-purple-500/30 hover:text-purple-300 transition-colors"
+              title="Contacts &amp; Groups"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+              </svg>
+            </button>
+
           <div ref={walletRef} className="relative">
             <button
               onClick={() => setWalletOpen(o => !o)}
@@ -1228,6 +1394,7 @@ export default function App() {
               </div>
             )}
           </div>
+          </div>  {/* end flex items-center gap-2 wrapper */}
         ) : (
           <ConnectModal
             trigger={
@@ -1328,6 +1495,7 @@ export default function App() {
                   onConfirm={() => handleConfirm(msg.id)}
                   onReset={() => handleReset(msg.id)}
                   onSign={() => handleNaviSign(msg.id)}
+                  onBatchSign={() => handleBatchSign(msg.id)}
                 />
               ))}
 
@@ -1381,16 +1549,27 @@ export default function App() {
                       </svg>
                     </button>
                   ) : (
-                    /* ── Send button ── */
-                    <button
-                      onClick={() => sendMessage(input)}
-                      disabled={!account || !input.trim()}
-                      className="shrink-0 w-8 h-8 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-20 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
-                    >
-                      <svg className="w-4 h-4 text-white transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
-                      </svg>
-                    </button>
+                    /* ── Mic + Send buttons ── */
+                    <div className="flex items-center gap-1.5">
+                      <MicButton
+                        disabled={!account || isLoading}
+                        wallet={account?.address}
+                        onTranscription={(text) => {
+                          setInput(text)
+                          // Auto-submit after 2 s so user can review
+                          setTimeout(() => sendMessage(text), 2000)
+                        }}
+                      />
+                      <button
+                        onClick={() => sendMessage(input)}
+                        disabled={!account || !input.trim()}
+                        className="shrink-0 w-8 h-8 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-20 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
+                      >
+                        <svg className="w-4 h-4 text-white transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1409,6 +1588,14 @@ export default function App() {
           onRefresh={refreshPortfolio}
         />
       </div>
+
+      {/* ── Contacts overlay ────────────────────────────────────────── */}
+      {contactsOpen && account && (
+        <ContactsPage
+          wallet={account.address}
+          onClose={() => setContactsOpen(false)}
+        />
+      )}
     </div>
   )
 }

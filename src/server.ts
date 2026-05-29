@@ -12,8 +12,15 @@ import fs               from 'fs'
 import path             from 'path'
 import express          from 'express'
 import cors             from 'cors'
+import multer           from 'multer'
 import Routex           from 'routex-sui'
 import { complete, activeProvider, LANG_NAMES, SUPPORTED_LANGS } from './ai/client.js'
+import {
+  loadContacts, addContact, removeContact, listContacts, lookupContact,
+  createGroup, addGroupMember, listGroups, lookupGroup, resolveGroupMembers,
+  incrementPaymentCount,
+} from './contacts/index.js'
+import { walrusHealthCheck } from './walrus/client.js'
 
 import { parseIntent }          from './parser/intent.js'
 import { runGuardian }          from './guardian/v2.js'
@@ -68,6 +75,16 @@ const SIM_ADDR = '0x000000000000000000000000000000000000000000000000000000000000
 const TOKEN_DECIMALS: Record<string, number> = {
   SUI: 1e9, USDC: 1e6, USDT: 1e6, DEEP: 1e6, WETH: 1e8, WBTC: 1e8, BUCK: 1e9,
 }
+
+// Coin type addresses for batch payments
+const TOKEN_COIN_TYPES: Record<string, string> = {
+  SUI:  '0x2::sui::SUI',
+  USDC: '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC',
+  USDT: '0xc060006111016b8a020ad5b33834984a437aaa7d3c74c18e09a95d48aceab08c::coin::COIN',
+}
+
+// Multer — memory storage for audio blobs (Whisper transcription)
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } })
 
 function toBaseUnits(amount: number, token: string): bigint {
   return BigInt(Math.round(amount * (TOKEN_DECIMALS[token.toUpperCase()] ?? 1e9)))
@@ -374,6 +391,224 @@ app.post('/api/intent', async (req, res) => {
         actionLabel: `· SEND · ${amount} ${token}`,
         ptbType:     'send',
         ptbParams:   { token, amount, recipient },
+      })
+      return
+    }
+
+    /* ── Contact payment — resolve name → address, then treat as send ── */
+
+    if (intent === 'contact_payment') {
+      const token         = (parsed.input_asset ?? 'SUI').toUpperCase()
+      const amount        = parsed.input_amount ?? 0
+      const recipientName = (parsed as any).recipient_name as string | null ?? parsed.recipient ?? ''
+
+      if (!recipientName) {
+        res.json({ ok: false, error: 'Who would you like to pay? Include their name.', language: lang })
+        return
+      }
+
+      const resolvedAddress = sender !== SIM_ADDR
+        ? await lookupContact(sender, recipientName).catch(() => null)
+        : null
+
+      if (!resolvedAddress) {
+        const askEn = `I don't have an address saved for "${recipientName}". What's their wallet address?`
+        const askMsg = lang === 'en' ? askEn : await complete({
+          system: 'You are Vektor. Translate this question exactly, keeping the name unchanged.',
+          prompt: askEn, maxTokens: 80, lang,
+        }).catch(() => askEn)
+        res.json({ ok: true, intent_type: 'general', parsedIntent: parsed, language: lang, message: askMsg, actionLabel: '· CONTACT · NOT FOUND' })
+        return
+      }
+
+      const msgEn = `Ready to send ${amount} ${token} to ${recipientName} (${resolvedAddress.slice(0, 8)}…${resolvedAddress.slice(-4)}).`
+      const msg   = lang === 'en' ? msgEn : await complete({
+        system: 'You are Vektor. Translate this transfer confirmation exactly.',
+        prompt: msgEn, maxTokens: 100, lang,
+      }).catch(() => msgEn)
+
+      res.json({
+        ok: true, intent_type: 'send', parsedIntent: { ...parsed, recipient: resolvedAddress },
+        language: lang, message: msg,
+        actionLabel: `· PAY · ${recipientName} · ${amount} ${token}`,
+        ptbType:    'send',
+        ptbParams:  { token, amount, recipient: resolvedAddress, contactName: recipientName },
+      })
+      return
+    }
+
+    /* ── Manage contacts (/contact add / remove / list) ──────────── */
+
+    if (intent === 'manage_contacts') {
+      const steps  = parsed.inferred_steps ?? []
+      const sub    = (steps[0] ?? '').toLowerCase()
+
+      if (sub === 'list') {
+        const contacts = sender !== SIM_ADDR ? await listContacts(sender).catch(() => []) : []
+        const listMsgEn = contacts.length === 0
+          ? 'You have no saved contacts yet. Add one with: /contact add 0xAddress as "Name"'
+          : `Your contacts:\n${contacts.map(c => `• ${c.name} — ${c.address.slice(0, 10)}…`).join('\n')}`
+        const listMsg = lang === 'en' ? listMsgEn : await complete({
+          system: 'You are Vektor. Translate this contacts list exactly, preserving names and addresses.',
+          prompt: listMsgEn, maxTokens: 200, lang,
+        }).catch(() => listMsgEn)
+        res.json({ ok: true, intent_type: intent, parsedIntent: parsed, language: lang, message: listMsg, contacts, actionLabel: `· CONTACTS · ${contacts.length} saved` })
+        return
+      }
+
+      if (sub === 'add') {
+        const name    = steps[1] ?? (parsed as any).recipient_name ?? ''
+        const address = steps[2] ?? parsed.recipient ?? ''
+        const note    = steps[3] ?? ''
+        if (!name || !address) {
+          res.json({ ok: false, error: 'Usage: /contact add 0xAddress as "Name"', language: lang }); return
+        }
+        const contact = sender !== SIM_ADDR
+          ? await addContact(sender, name, address, note || undefined).catch(e => { throw e })
+          : { name, address }
+        const addMsgEn = `Saved ${name} (${address.slice(0, 10)}…) to your contacts on Walrus.`
+        const addMsg   = lang === 'en' ? addMsgEn : await complete({
+          system: 'You are Vektor. Translate this confirmation exactly.',
+          prompt: addMsgEn, maxTokens: 80, lang,
+        }).catch(() => addMsgEn)
+        res.json({ ok: true, intent_type: intent, parsedIntent: parsed, language: lang, message: addMsg, contact, actionLabel: `· CONTACT SAVED · ${name}` })
+        return
+      }
+
+      if (sub === 'remove') {
+        const name = steps[1] ?? ''
+        if (!name) { res.json({ ok: false, error: 'Which contact name to remove?', language: lang }); return }
+        const removed = sender !== SIM_ADDR ? await removeContact(sender, name).catch(() => false) : false
+        const delMsgEn = removed ? `Removed "${name}" from your contacts.` : `No contact named "${name}" found.`
+        const delMsg   = lang === 'en' ? delMsgEn : await complete({
+          system: 'You are Vektor. Translate this message exactly.',
+          prompt: delMsgEn, maxTokens: 80, lang,
+        }).catch(() => delMsgEn)
+        res.json({ ok: true, intent_type: intent, parsedIntent: parsed, language: lang, message: delMsg, actionLabel: removed ? `· CONTACT REMOVED · ${name}` : '· NOT FOUND' })
+        return
+      }
+
+      // Unknown sub-command — return usage
+      res.json({
+        ok: true, intent_type: intent, parsedIntent: parsed, language: lang,
+        message: 'Contact commands:\n• /contact add 0xAddress as "Name"\n• /contact remove "Name"\n• /contact list',
+        actionLabel: '· CONTACTS',
+      })
+      return
+    }
+
+    /* ── Manage groups (/group create / add / list / show) ───────── */
+
+    if (intent === 'manage_groups') {
+      const steps = parsed.inferred_steps ?? []
+      const sub   = (steps[0] ?? '').toLowerCase()
+
+      if (sub === 'list') {
+        const groups = sender !== SIM_ADDR ? await listGroups(sender).catch(() => []) : []
+        const listEn = groups.length === 0
+          ? 'No groups yet. Create one with: /group create "Staff" with Alice, Bob, Carol'
+          : `Your groups:\n${groups.map(g => `• ${g.name} (${g.members.length} members)`).join('\n')}`
+        const listMsg = lang === 'en' ? listEn : await complete({
+          system: 'You are Vektor. Translate this group list exactly.',
+          prompt: listEn, maxTokens: 200, lang,
+        }).catch(() => listEn)
+        res.json({ ok: true, intent_type: intent, parsedIntent: parsed, language: lang, message: listMsg, groups, actionLabel: `· GROUPS · ${groups.length}` })
+        return
+      }
+
+      if (sub === 'create') {
+        const groupName = steps[1] ?? ''
+        if (!groupName) { res.json({ ok: false, error: 'Group name required. Usage: /group create "Staff" with Alice, Bob', language: lang }); return }
+
+        // Resolve member names from contacts for this user
+        const memberNames = steps.slice(2)
+        const contactList = sender !== SIM_ADDR ? await listContacts(sender).catch(() => []) : []
+        const members = memberNames.map(name => {
+          const c = contactList.find(ct => ct.name.toLowerCase() === name.toLowerCase())
+          return { name, address: c?.address ?? '' }
+        }).filter(m => m.address !== '')
+
+        const group = sender !== SIM_ADDR
+          ? await createGroup(sender, groupName, members).catch(e => { throw e })
+          : { name: groupName, members, createdAt: Date.now() }
+
+        const createEn = `Group "${groupName}" created with ${members.length} members: ${members.map(m => m.name).join(', ')}.`
+        const createMsg = lang === 'en' ? createEn : await complete({
+          system: 'You are Vektor. Translate this message exactly.',
+          prompt: createEn, maxTokens: 120, lang,
+        }).catch(() => createEn)
+        res.json({ ok: true, intent_type: intent, parsedIntent: parsed, language: lang, message: createMsg, group, actionLabel: `· GROUP CREATED · ${groupName}` })
+        return
+      }
+
+      if (sub === 'show') {
+        const groupName = steps[1] ?? ''
+        const group = sender !== SIM_ADDR ? await lookupGroup(sender, groupName).catch(() => null) : null
+        const showEn = group
+          ? `Group "${group.name}":\n${group.members.map(m => `• ${m.name} — ${m.address.slice(0, 10)}…`).join('\n')}`
+          : `No group named "${groupName}" found.`
+        const showMsg = lang === 'en' ? showEn : await complete({
+          system: 'You are Vektor. Translate this message exactly.',
+          prompt: showEn, maxTokens: 200, lang,
+        }).catch(() => showEn)
+        res.json({ ok: true, intent_type: intent, parsedIntent: parsed, language: lang, message: showMsg, group, actionLabel: group ? `· GROUP · ${groupName}` : '· NOT FOUND' })
+        return
+      }
+
+      res.json({
+        ok: true, intent_type: intent, parsedIntent: parsed, language: lang,
+        message: 'Group commands:\n• /group create "Name" with Alice, Bob\n• /group show "Name"\n• /group list',
+        actionLabel: '· GROUPS',
+      })
+      return
+    }
+
+    /* ── Batch payment — "pay my staff 500 USDC each" ────────────── */
+
+    if (intent === 'batch_payment' || intent === 'split_payment') {
+      const token     = (parsed.input_asset ?? 'USDC').toUpperCase()
+      const amount    = parsed.input_amount ?? 0
+      const groupName = (parsed as any).group_name as string | null ?? ''
+      const isSplit   = intent === 'split_payment' || (parsed as any).per_person === false
+      const perPerson = !isSplit
+
+      if (!groupName) {
+        res.json({ ok: false, error: 'Which group should receive this payment? (e.g. "my staff")', language: lang }); return
+      }
+
+      const members = sender !== SIM_ADDR
+        ? await resolveGroupMembers(sender, groupName).catch(() => null)
+        : null
+
+      if (!members || members.length === 0) {
+        const notFoundEn = `I don't have a group called "${groupName}". Create one with: /group create "${groupName}" with Alice, Bob`
+        const notFoundMsg = lang === 'en' ? notFoundEn : await complete({
+          system: 'You are Vektor. Translate this message exactly.',
+          prompt: notFoundEn, maxTokens: 100, lang,
+        }).catch(() => notFoundEn)
+        res.json({ ok: true, intent_type: 'general', parsedIntent: parsed, language: lang, message: notFoundMsg, actionLabel: '· GROUP · NOT FOUND' })
+        return
+      }
+
+      const perPersonAmount = isSplit ? amount / members.length : amount
+      const totalAmount     = isSplit ? amount : amount * members.length
+
+      res.json({
+        ok:          true,
+        intent_type: intent,
+        parsedIntent: parsed,
+        language:    lang,
+        message:     `Batch payment ready: ${members.length} recipients, ${perPersonAmount.toFixed(2)} ${token} each. Total: ${totalAmount.toFixed(2)} ${token}.`,
+        actionLabel: `· BATCH · ${members.length} × ${perPersonAmount.toFixed(2)} ${token}`,
+        batchData: {
+          groupName,
+          members,
+          token,
+          amountPerPerson: perPersonAmount,
+          totalAmount,
+          isSplit,
+          perPerson,
+        },
       })
       return
     }
@@ -1069,10 +1304,164 @@ app.get('/api/memory/:wallet', (req, res) => {
   })
 })
 
+/* ─── Contacts ────────────────────────────────────────────────────────── */
+
+app.get('/api/contacts/:wallet', async (req, res) => {
+  try {
+    const contacts = await listContacts(req.params.wallet)
+    const groups   = await listGroups(req.params.wallet)
+    res.json({ ok: true, contacts, groups })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+app.post('/api/contacts/:wallet', async (req, res) => {
+  try {
+    const { name, address, note } = req.body as { name: string; address: string; note?: string }
+    if (!name || !address) { res.status(400).json({ ok: false, error: 'name and address required' }); return }
+    const contact = await addContact(req.params.wallet, name, address, note)
+    res.json({ ok: true, contact })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+app.delete('/api/contacts/:wallet/:name', async (req, res) => {
+  try {
+    const removed = await removeContact(req.params.wallet, decodeURIComponent(req.params.name))
+    res.json({ ok: removed })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+/* ─── Groups ──────────────────────────────────────────────────────────── */
+
+app.post('/api/groups/:wallet', async (req, res) => {
+  try {
+    const { name, members } = req.body as { name: string; members: { name: string; address: string }[] }
+    if (!name) { res.status(400).json({ ok: false, error: 'group name required' }); return }
+    const group = await createGroup(req.params.wallet, name, members ?? [])
+    res.json({ ok: true, group })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+app.post('/api/groups/:wallet/:groupName/members', async (req, res) => {
+  try {
+    const { name, address } = req.body as { name: string; address: string }
+    if (!name || !address) { res.status(400).json({ ok: false, error: 'name and address required' }); return }
+    const ok = await addGroupMember(req.params.wallet, decodeURIComponent(req.params.groupName), { name, address })
+    res.json({ ok })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+/* ─── Batch payment PTB builder ───────────────────────────────────────── */
+
+app.post('/api/batch-payment-ptb', async (req, res) => {
+  try {
+    const { senderAddress, members, amountPerPerson, token } = req.body as {
+      senderAddress: string
+      members:       { name: string; address: string }[]
+      amountPerPerson: number
+      token:           string
+    }
+
+    if (!senderAddress || !members?.length || !amountPerPerson || !token) {
+      res.status(400).json({ ok: false, error: 'Missing required batch payment fields' }); return
+    }
+
+    const { Transaction } = await import('@mysten/sui/transactions')
+    const tx = new Transaction()
+    tx.setSender(senderAddress)
+
+    const tokenUpper  = token.toUpperCase()
+    const coinType    = TOKEN_COIN_TYPES[tokenUpper] ?? '0x2::sui::SUI'
+    const decimals    = TOKEN_DECIMALS[tokenUpper]   ?? 1e9
+    const amountMist  = BigInt(Math.round(amountPerPerson * decimals))
+
+    if (tokenUpper === 'SUI') {
+      // Use gas coin for SUI transfers — most gas-efficient
+      const splits = tx.splitCoins(
+        tx.gas,
+        members.map(() => tx.pure.u64(amountMist)),
+      )
+      members.forEach((m, i) => tx.transferObjects([splits[i]], m.address))
+    } else {
+      // For other tokens: coinWithBalance per recipient
+      // Transaction builder handles coin selection/merging automatically
+      const { coinWithBalance } = await import('@mysten/sui/transactions')
+      for (const member of members) {
+        const coin = coinWithBalance({ type: coinType, balance: amountMist }) as any
+        tx.transferObjects([coin], member.address)
+      }
+    }
+
+    const ptbJson = tx.serialize()
+    res.json({ ok: true, ptbJson, recipientCount: members.length, totalAmount: amountPerPerson * members.length, token })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+/* ─── Walrus health check ─────────────────────────────────────────────── */
+
+app.get('/api/walrus/health', async (_, res) => {
+  const ok = await walrusHealthCheck()
+  res.json({ ok, network: process.env.SUI_NETWORK ?? 'mainnet' })
+})
+
+/* ─── Voice transcription — POST /api/transcribe ─────────────────────── */
+// Accepts audio blob (webm/mp4/wav), returns transcribed text via Whisper.
+// Audio is NOT stored anywhere — transcribed and discarded immediately.
+
+app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) { res.status(400).json({ ok: false, error: 'audio file required' }); return }
+
+    const apiKey = process.env.OPENAI_API_KEY
+    if (!apiKey) { res.status(503).json({ ok: false, error: 'OPENAI_API_KEY not configured' }); return }
+
+    const { default: OpenAI } = await import('openai')
+    const openai = new OpenAI({ apiKey })
+
+    // Detect user language for better transcription accuracy
+    const wallet = (req.body as any).wallet as string | undefined
+    const lang   = wallet ? getPreferredLanguage(wallet) : 'en'
+
+    // Build a File from the buffer for the OpenAI SDK
+    const mimeType = req.file.mimetype || 'audio/webm'
+    const ext      = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('wav') ? 'wav' : 'webm'
+    const audioFile = new File([req.file.buffer], `audio.${ext}`, { type: mimeType })
+
+    const transcription = await openai.audio.transcriptions.create({
+      file:     audioFile,
+      model:    'whisper-1',
+      language: lang !== 'en' ? lang : undefined,  // auto-detect for English
+      response_format: 'text',
+    })
+
+    const text = typeof transcription === 'string' ? transcription.trim() : (transcription as any).text?.trim() ?? ''
+
+    // If language was auto-detected (lang was 'en'), Whisper may have detected a different language.
+    // We don't have that info in 'text' format — use 'verbose_json' to get it next time if needed.
+
+    res.json({ ok: true, text })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: `Transcription failed: ${msg}` })
+  }
+})
+
 /* ─── Health ─────────────────────────────────────────────────────────── */
 
 app.get('/api/health', (_, res) => {
-  res.json({ ok: true, version: '2.0.0', features: ['guardian', 'navi', 'dca', 'conditions', 'memory', 'alerts'] })
+  res.json({ ok: true, version: '2.0.0', features: ['guardian', 'navi', 'dca', 'conditions', 'memory', 'alerts', 'contacts', 'voice'] })
 })
 
 /* ─── Start ───────────────────────────────────────────────────────────── */
