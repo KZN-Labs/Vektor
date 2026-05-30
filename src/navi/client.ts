@@ -4,7 +4,7 @@
  * PTBs are returned serialized for the UI to sign via dapp-kit.
  */
 
-import { SuiJsonRpcClient as SuiClient, getJsonRpcFullnodeUrl as getFullnodeUrl } from '@mysten/sui/jsonRpc'
+import { SuiClient, getFullnodeUrl } from '@mysten/sui/client'
 import { Transaction }               from '@mysten/sui/transactions'
 import {
   NAVISDKClient,
@@ -13,21 +13,19 @@ import {
   depositCoin,
   borrowCoin,
   repayDebt,
-  withdrawCoin,
-  Sui as SuiCoin,
-  USDT as USDTCoin,
-  wUSDC as USDCCoin,
+  pool as naviPool,
 } from 'navi-sdk'
-import type { CoinInfo, PoolConfig } from 'navi-sdk'
 
-const suiClient = new SuiClient({ url: getFullnodeUrl('mainnet'), network: 'mainnet' } as any)
+// Use the correct SuiClient from @mysten/sui/client — not the low-level jsonRpc variant.
+const suiClient = new SuiClient({ url: getFullnodeUrl('mainnet') })
 
-/* ─── Coin registry ─────────────────────────────────────────────────────── */
+/* ─── Pool registry (PoolConfig, not CoinInfo — has poolId + assetId) ───── */
+// depositCoin / borrowCoin / repayDebt need a PoolConfig, not a CoinInfo.
 
-const COIN_INFO: Record<string, CoinInfo> = {
-  SUI:  SuiCoin,
-  USDC: USDCCoin,
-  USDT: USDTCoin,
+const POOL_CONFIG: Record<string, any> = {
+  SUI:  naviPool.Sui,
+  USDC: naviPool.nUSDC,  // native USDC (Circle) — preferred over wormhole wUSDC
+  USDT: naviPool.USDT,
 }
 
 const COIN_DECIMALS: Record<string, number> = {
@@ -103,8 +101,8 @@ export async function buildDepositPTB(
   symbol:  string,
   amount:  number,
 ): Promise<string> {
-  const coinInfo = COIN_INFO[symbol.toUpperCase()]
-  if (!coinInfo) throw new Error(`Unsupported NAVI token: ${symbol}`)
+  const pool = POOL_CONFIG[symbol.toUpperCase()]
+  if (!pool) throw new Error(`Unsupported NAVI token: ${symbol}`)
   checkMinAmount('deposit', symbol, amount)
 
   const decimals  = COIN_DECIMALS[symbol.toUpperCase()] ?? 1e9
@@ -112,10 +110,8 @@ export async function buildDepositPTB(
 
   const tx = new Transaction()
   tx.setSender(wallet)
-
-  // Get a coin object to deposit
   const [coinObj] = tx.splitCoins(tx.gas, [amountRaw])
-  await depositCoin(tx as any, coinInfo as unknown as PoolConfig, coinObj, amountRaw)
+  await depositCoin(tx as any, pool, coinObj, amountRaw)
 
   tx.setGasBudget(20_000_000)
   const bytes = await tx.build({ client: suiClient as any })
@@ -128,8 +124,8 @@ export async function buildBorrowPTB(
   symbol:  string,
   amount:  number,
 ): Promise<string> {
-  const coinInfo = COIN_INFO[symbol.toUpperCase()]
-  if (!coinInfo) throw new Error(`Unsupported NAVI token: ${symbol}`)
+  const pool = POOL_CONFIG[symbol.toUpperCase()]
+  if (!pool) throw new Error(`Unsupported NAVI token: ${symbol}`)
   checkMinAmount('borrow', symbol, amount)
 
   const decimals  = COIN_DECIMALS[symbol.toUpperCase()] ?? 1e9
@@ -137,8 +133,7 @@ export async function buildBorrowPTB(
 
   const tx = new Transaction()
   tx.setSender(wallet)
-
-  await borrowCoin(tx as any, coinInfo as unknown as PoolConfig, amountRaw)
+  await borrowCoin(tx as any, pool, amountRaw)
 
   tx.setGasBudget(20_000_000)
   const bytes = await tx.build({ client: suiClient as any })
@@ -151,8 +146,8 @@ export async function buildRepayPTB(
   symbol:  string,
   amount:  number,
 ): Promise<string> {
-  const coinInfo = COIN_INFO[symbol.toUpperCase()]
-  if (!coinInfo) throw new Error(`Unsupported NAVI token: ${symbol}`)
+  const pool = POOL_CONFIG[symbol.toUpperCase()]
+  if (!pool) throw new Error(`Unsupported NAVI token: ${symbol}`)
   checkMinAmount('repay', symbol, amount)
 
   const decimals  = COIN_DECIMALS[symbol.toUpperCase()] ?? 1e9
@@ -160,9 +155,8 @@ export async function buildRepayPTB(
 
   const tx = new Transaction()
   tx.setSender(wallet)
-
   const [coinObj] = tx.splitCoins(tx.gas, [amountRaw])
-  await repayDebt(tx as any, coinInfo as unknown as PoolConfig, coinObj, amountRaw)
+  await repayDebt(tx as any, pool, coinObj, amountRaw)
 
   tx.setGasBudget(20_000_000)
   const bytes = await tx.build({ client: suiClient as any })

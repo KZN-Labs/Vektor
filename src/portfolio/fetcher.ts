@@ -164,15 +164,21 @@ async function fetchNaviPositions(wallet: string): Promise<PortfolioSnapshot['na
 
 export async function fetchPortfolio(wallet: string): Promise<PortfolioSnapshot> {
   // Run everything in parallel — NAVI and tx history no longer block balance display.
+  const txTimeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('tx history timeout')), 5000)
+  )
   const [allCoins, prices, recentTxs, naviResult] = await Promise.allSettled([
     fetchAllCoinsWithRetry(wallet),
     fetchPricesUsd(),
-    client.queryTransactionBlocks({
-      filter:  { FromAddress: wallet },
-      options: { showInput: false, showEffects: true },
-      limit:   20,
-      order:   'descending',
-    }),
+    Promise.race([
+      client.queryTransactionBlocks({
+        filter:  { FromAddress: wallet },
+        options: { showInput: false, showEffects: true },
+        limit:   20,
+        order:   'descending',
+      }),
+      txTimeout,
+    ]),
     fetchNaviPositions(wallet),
   ])
 
