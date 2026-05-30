@@ -8,6 +8,12 @@
  */
 
 import 'dotenv/config'
+
+// Polyfill File global — required by Groq/OpenAI SDKs on Node < 20.
+// Node 18 ships File inside node:buffer but doesn't expose it as a global.
+import { File as NodeFile } from 'node:buffer'
+if (!globalThis.File) { (globalThis as any).File = NodeFile }
+
 import fs               from 'fs'
 import path             from 'path'
 import express          from 'express'
