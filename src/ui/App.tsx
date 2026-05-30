@@ -1695,9 +1695,15 @@ export default function App() {
                       <MicButton
                         disabled={!account || isLoading}
                         wallet={account?.address}
-                        onTranscription={(text) => {
+                        onLiveText={(text) => {
+                          // Interim results — show text live in the input as you speak
                           setInput(text)
-                          // Auto-submit after 2 s so user can review
+                          if (textareaRef.current) autoResize(textareaRef.current)
+                        }}
+                        onTranscription={(text) => {
+                          // Final result — set and auto-submit after 2 s
+                          setInput(text)
+                          if (textareaRef.current) autoResize(textareaRef.current)
                           setTimeout(() => sendMessage(text), 2000)
                         }}
                       />
