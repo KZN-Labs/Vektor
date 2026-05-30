@@ -909,13 +909,19 @@ app.post('/api/intent', async (req, res) => {
     // Prevents front-running by keeping intent private until execution moment
     // Do not implement now. Reserved for v1.5.
 
-    const quote = await routex.getQuote({
-      from:              fromToken,
-      to:                toToken,
-      amount:            amountIn,
-      slippageTolerance: parsed.constraints.max_slippage ?? 0.005,
-      senderAddress:     sender,
-    })
+    const QUOTE_TIMEOUT_MS = 30_000
+    const quote = await Promise.race([
+      routex.getQuote({
+        from:              fromToken,
+        to:                toToken,
+        amount:            amountIn,
+        slippageTolerance: parsed.constraints.max_slippage ?? 0.005,
+        senderAddress:     sender,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Quote timed out — DEX liquidity sources are slow. Please try again.')), QUOTE_TIMEOUT_MS)
+      ),
+    ])
 
     const quoteWithSym = { ...quote, fromSymbol: fromToken, toSymbol: toToken }
     const report       = await runGuardian(quoteWithSym, sender, null, lang)
@@ -1189,13 +1195,18 @@ app.post('/api/execute-scheduled/:id', async (req, res) => {
 
     const amountIn = toBaseUnits(amount, fromToken)
     const routex   = new Routex('mainnet', sender)
-    const quote    = await routex.getQuote({
-      from:              fromToken,
-      to:                toToken,
-      amount:            amountIn,
-      slippageTolerance: scheduled.intent?.constraints?.max_slippage ?? 0.005,
-      senderAddress:     sender,
-    })
+    const quote    = await Promise.race([
+      routex.getQuote({
+        from:              fromToken,
+        to:                toToken,
+        amount:            amountIn,
+        slippageTolerance: scheduled.intent?.constraints?.max_slippage ?? 0.005,
+        senderAddress:     sender,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Quote timed out — DEX liquidity sources are slow. Please try again.')), 30_000)
+      ),
+    ])
 
     const quoteWithSym = { ...quote, fromSymbol: fromToken, toSymbol: toToken }
     const report       = await runGuardian(quoteWithSym, sender, null, lang)
@@ -1237,13 +1248,18 @@ app.post('/api/ptb', async (req, res) => {
       res.status(400).json({ ok: false, error: 'Missing required fields' }); return
     }
     const routex = new Routex('mainnet', sender)
-    const quote  = await routex.getQuote({
-      from,
-      to,
-      amount:            BigInt(amountIn),
-      slippageTolerance: slippage ?? 0.005,
-      senderAddress:     sender,
-    })
+    const quote  = await Promise.race([
+      routex.getQuote({
+        from,
+        to,
+        amount:            BigInt(amountIn),
+        slippageTolerance: slippage ?? 0.005,
+        senderAddress:     sender,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Quote timed out — DEX liquidity sources are slow. Please try again.')), 30_000)
+      ),
+    ])
 
     // Feature 5: VektorLog — atomically append on-chain log call when package is deployed
     const logPackageId = process.env.VEKTORLOG_PACKAGE_ID
