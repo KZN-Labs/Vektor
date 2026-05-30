@@ -1445,18 +1445,17 @@ app.post('/api/transcribe', async (req, res) => {
       return
     }
 
-    const apiKey = process.env.OPENAI_API_KEY
-    if (!apiKey) {
-      res.status(503).json({ ok: false, error: 'OPENAI_API_KEY not configured on server.' })
+    // Use Groq Whisper (already have GROQ_API_KEY), fall back to OpenAI if configured
+    const groqKey  = process.env.GROQ_API_KEY
+    const openaiKey = process.env.OPENAI_API_KEY
+    if (!groqKey && !openaiKey) {
+      res.status(503).json({ ok: false, error: 'No transcription API key configured (need GROQ_API_KEY or OPENAI_API_KEY in .env).' })
       return
     }
 
-    const { default: OpenAI } = await import('openai')
-    const openai = new OpenAI({ apiKey })
-
-    const wallet  = (req.body as any).wallet   as string | undefined
+    const wallet   = (req.body as any).wallet   as string | undefined
     const langHint = (req.body as any).language as string | undefined
-    const lang    = langHint || (wallet ? getPreferredLanguage(wallet) : undefined)
+    const lang     = langHint || (wallet ? getPreferredLanguage(wallet) : undefined)
 
     const mimeType = req.file.mimetype || 'audio/webm'
     const ext      = mimeType.includes('mp4') ? 'm4a'
@@ -1485,14 +1484,32 @@ app.post('/api/transcribe', async (req, res) => {
 
     const audioFile = new File([fileBuffer], `voice.${ext}`, { type: mimeType })
 
-    const transcription = await openai.audio.transcriptions.create({
-      file:            audioFile,
-      model:           'whisper-1',
-      language:        lang && lang !== 'en' ? lang : undefined,
-      response_format: 'text',
-    })
+    let transcription: string
+    if (groqKey) {
+      // Groq Whisper — faster, free tier, already integrated
+      const { default: Groq } = await import('groq-sdk')
+      const groq = new Groq({ apiKey: groqKey })
+      const result = await groq.audio.transcriptions.create({
+        file:            audioFile,
+        model:           'whisper-large-v3-turbo',
+        language:        lang && lang !== 'en' ? lang : undefined,
+        response_format: 'text',
+      })
+      transcription = typeof result === 'string' ? result : (result as any).text ?? ''
+    } else {
+      // OpenAI Whisper fallback
+      const { default: OpenAI } = await import('openai')
+      const openai = new OpenAI({ apiKey: openaiKey })
+      const result = await openai.audio.transcriptions.create({
+        file:            audioFile,
+        model:           'whisper-1',
+        language:        lang && lang !== 'en' ? lang : undefined,
+        response_format: 'text',
+      })
+      transcription = typeof result === 'string' ? result : (result as any).text ?? ''
+    }
 
-    const text = (typeof transcription === 'string' ? transcription : (transcription as any).text ?? '').trim()
+    const text = transcription.trim()
     res.json({ ok: true, text })
 
   } catch (err) {
