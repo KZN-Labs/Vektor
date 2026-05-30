@@ -747,55 +747,138 @@ function AlertBanner({ alerts, onDismiss, onExecute }: AlertBannerProps) {
 
 /* ─── Slash commands definition ─────────────────────────────────────────── */
 
-const SLASH_COMMANDS = [
-  { cmd: '/contact add ',    hint: '[name] [0x address]',          label: 'Save a contact',             icon: '＋' },
-  { cmd: '/contact list',    hint: '',                              label: 'List your contacts',          icon: '≡' },
-  { cmd: '/contact remove ', hint: '[name]',                        label: 'Remove a contact',            icon: '✕' },
-  { cmd: '/group create ',   hint: '[name] with [alice, bob, ...]', label: 'Create a payment group',     icon: '◈' },
-  { cmd: '/group list',      hint: '',                              label: 'List your groups',            icon: '≡' },
-  { cmd: '/group show ',     hint: '[name]',                        label: 'Show group members',          icon: '◉' },
-  { cmd: '/group add ',      hint: '[group] [name] [0x address]',   label: 'Add member to a group',      icon: '＋' },
-  { cmd: '/pay ',            hint: '[name] [amount] [token]',       label: 'Pay a saved contact',        icon: '➤' },
-  { cmd: '/split ',          hint: '[amount] [token] among [group]',label: 'Split payment across group', icon: '⊣' },
-  { cmd: '/batch ',          hint: '[amount] [token] to [group]',   label: 'Pay everyone in a group',    icon: '⊢' },
+/* ─── Full feature list — shown when user types / ─────────────────────────── */
+
+interface FeatureEntry {
+  example:  string   // fills the input on click
+  label:    string   // one-line description
+  category: string
+}
+
+const ALL_FEATURES: FeatureEntry[] = [
+  // ── Swap & Trading ──────────────────────────────────────────────────────
+  { category: 'Swap',       example: 'Swap 1 SUI to USDC',                              label: 'Exchange one token for another via best route'        },
+  { category: 'Swap',       example: 'Swap 50 USDC to SUI with max 0.5% slippage',      label: 'Swap with a slippage cap'                             },
+  { category: 'Swap',       example: 'Buy LOFI memecoin with 10 USDC',                  label: 'Buy a memecoin / speculative token'                   },
+  { category: 'Swap',       example: 'Sell my BLUB',                                    label: 'Exit a memecoin position'                             },
+  { category: 'Swap',       example: 'Buy LOFI and exit at 20% profit',                 label: 'Buy and auto-exit when profit target is hit'          },
+  { category: 'Swap',       example: 'Buy OCEAN with stop loss at 15%',                 label: 'Buy with automatic stop-loss protection'              },
+  { category: 'Swap',       example: 'Rebalance my portfolio to 50% SUI 50% USDC',      label: 'Rebalance to target weights'                          },
+  { category: 'Swap',       example: 'Compound my rewards on Cetus',                    label: 'Reinvest yield/rewards automatically'                  },
+  // ── NAVI ────────────────────────────────────────────────────────────────
+  { category: 'NAVI',       example: 'Lend 100 USDC on NAVI',                           label: 'Deposit assets to NAVI to earn yield'                 },
+  { category: 'NAVI',       example: 'Borrow 50 USDC from NAVI',                        label: 'Borrow against your collateral on NAVI'               },
+  { category: 'NAVI',       example: 'Repay 50 USDC on NAVI',                           label: 'Repay borrowed debt on NAVI'                          },
+  { category: 'NAVI',       example: 'Check my health factor',                           label: 'View your NAVI liquidation health factor'             },
+  { category: 'NAVI',       example: 'Check my open positions',                          label: 'See all open NAVI positions'                          },
+  // ── Automation ──────────────────────────────────────────────────────────
+  { category: 'Automate',   example: 'DCA 10 USDC into SUI every day for 30 days',      label: 'Dollar-cost average into an asset over time'          },
+  { category: 'Automate',   example: 'DCA 50 USDC into SUI every Friday',               label: 'Weekly DCA on a specific day'                        },
+  { category: 'Automate',   example: 'Send 5 USDC to 0xabc every month',                label: 'Recurring scheduled payment'                          },
+  { category: 'Automate',   example: 'Swap 0.5 SUI to USDC in 10 minutes',              label: 'Delayed one-time action'                              },
+  { category: 'Automate',   example: 'Lend 100 USDC on NAVI tomorrow at noon',          label: 'Scheduled future action'                              },
+  // ── Conditions ──────────────────────────────────────────────────────────
+  { category: 'Conditions', example: 'Swap my SUI to USDC if SUI drops below $3',       label: 'Trigger a swap when price crosses a threshold'        },
+  { category: 'Conditions', example: 'Buy SUI if SUI goes above $5',                    label: 'Buy trigger on price rise'                            },
+  { category: 'Conditions', example: 'Exit all memecoins if my health factor drops below 1.5', label: 'Protect your NAVI position automatically'      },
+  // ── Portfolio & Info ─────────────────────────────────────────────────────
+  { category: 'Portfolio',  example: 'Check my balance',                                 label: 'Show all token balances'                              },
+  { category: 'Portfolio',  example: 'How much USDC do I have',                          label: 'Check balance of a specific token'                    },
+  { category: 'Portfolio',  example: 'Analyze my wallet',                                label: 'Deep AI analysis of your portfolio with recommendations' },
+  { category: 'Portfolio',  example: 'Price of SUI',                                     label: 'Look up current market price of a token'              },
+  { category: 'Portfolio',  example: 'What is WETH worth',                               label: 'Token price query'                                    },
+  { category: 'Portfolio',  example: 'Show my recent transactions',                      label: 'View recent transaction history'                      },
+  { category: 'Portfolio',  example: 'Explain transaction D8zRVkhz...',                  label: 'AI explanation of any Sui transaction digest'         },
+  // ── Payments ─────────────────────────────────────────────────────────────
+  { category: 'Payments',   example: 'Send 10 USDC to 0xabc123...',                     label: 'Direct transfer to a wallet address'                  },
+  { category: 'Payments',   example: 'Request payment of 50 USDC',                      label: 'Generate a shareable payment request link'            },
+  { category: 'Payments',   example: 'Pay Mum 50 USDC',                                 label: 'Pay a saved contact by name'                          },
+  { category: 'Payments',   example: 'Pay my staff 200 USDC each',                      label: 'Batch pay all members of a group'                     },
+  { category: 'Payments',   example: 'Split 1000 USDC among my contractors',            label: 'Split an amount equally across a group'               },
+  // ── Contacts ─────────────────────────────────────────────────────────────
+  { category: 'Contacts',   example: '/contact add Mum 0xabc123...',                    label: 'Save a wallet address as a contact'                   },
+  { category: 'Contacts',   example: '/contact list',                                    label: 'List all saved contacts'                              },
+  { category: 'Contacts',   example: '/contact remove Mum',                              label: 'Remove a contact'                                     },
+  // ── Groups ───────────────────────────────────────────────────────────────
+  { category: 'Groups',     example: '/group create Staff with Alice, Bob, Carol',       label: 'Create a named payment group'                         },
+  { category: 'Groups',     example: '/group list',                                      label: 'List all groups'                                      },
+  { category: 'Groups',     example: '/group show Staff',                                label: 'Show members of a group'                              },
+  { category: 'Groups',     example: '/group add Staff Dave 0xabc123...',               label: 'Add a member to an existing group'                    },
 ]
+
+const CATEGORY_ORDER = ['Swap', 'NAVI', 'Automate', 'Conditions', 'Portfolio', 'Payments', 'Contacts', 'Groups']
+const CATEGORY_COLOR: Record<string, string> = {
+  Swap:       'text-purple-400',
+  NAVI:       'text-emerald-400',
+  Automate:   'text-blue-400',
+  Conditions: 'text-yellow-400',
+  Portfolio:  'text-cyan-400',
+  Payments:   'text-orange-400',
+  Contacts:   'text-pink-400',
+  Groups:     'text-indigo-400',
+}
 
 interface SlashMenuProps {
   filter:   string
-  onSelect: (cmd: string) => void
+  onSelect: (example: string) => void
   onClose:  () => void
 }
 
 function SlashMenu({ filter, onSelect, onClose }: SlashMenuProps) {
-  const matches = SLASH_COMMANDS.filter(c =>
-    c.cmd.toLowerCase().startsWith(filter.toLowerCase()) ||
-    c.label.toLowerCase().includes(filter.slice(1).toLowerCase())
-  )
+  const q = filter.slice(1).toLowerCase().trim()   // strip leading /
+
+  const matches = q
+    ? ALL_FEATURES.filter(f =>
+        f.example.toLowerCase().includes(q) ||
+        f.label.toLowerCase().includes(q)   ||
+        f.category.toLowerCase().includes(q)
+      )
+    : ALL_FEATURES   // show all when just /
+
   if (matches.length === 0) return null
 
+  // Group by category preserving CATEGORY_ORDER
+  const grouped: Record<string, FeatureEntry[]> = {}
+  for (const cat of CATEGORY_ORDER) grouped[cat] = []
+  for (const f of matches) {
+    if (grouped[f.category]) grouped[f.category].push(f)
+  }
+
   return (
-    <div className="absolute bottom-full mb-2 left-0 right-0 bg-[#111118] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-30">
-      <div className="px-3 py-2 border-b border-white/5 flex items-center justify-between">
-        <span className="text-[9px] font-mono uppercase tracking-widest text-slate-600">Commands</span>
-        <button onClick={onClose} className="text-[10px] text-slate-700 hover:text-slate-400">✕</button>
+    <div className="absolute bottom-full mb-2 left-0 right-0 bg-[#0d0d12] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-30">
+      <div className="px-4 py-2.5 border-b border-white/5 flex items-center justify-between">
+        <span className="text-[9px] font-mono uppercase tracking-widest text-slate-500">
+          {q ? `${matches.length} features` : 'All Vektor features — click to use'}
+        </span>
+        <button onClick={onClose} className="text-[10px] text-slate-700 hover:text-slate-400 leading-none">✕</button>
       </div>
-      <div className="max-h-64 overflow-y-auto">
-        {matches.map(c => (
-          <button
-            key={c.cmd}
-            onClick={() => onSelect(c.cmd)}
-            className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-purple-500/10 transition-colors text-left group"
-          >
-            <span className="text-purple-400 text-xs w-4 shrink-0 text-center">{c.icon}</span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2">
-                <span className="text-sm text-white font-mono">{c.cmd.trim()}</span>
-                {c.hint && <span className="text-xs text-slate-600 truncate">{c.hint}</span>}
+
+      <div className="max-h-96 overflow-y-auto divide-y divide-white/[0.03]">
+        {CATEGORY_ORDER.map(cat => {
+          const items = grouped[cat]
+          if (!items?.length) return null
+          return (
+            <div key={cat}>
+              <div className="px-4 pt-2.5 pb-1">
+                <span className={`text-[9px] font-mono uppercase tracking-widest font-semibold ${CATEGORY_COLOR[cat]}`}>
+                  {cat}
+                </span>
               </div>
-              <p className="text-[10px] text-slate-500 group-hover:text-slate-400 transition-colors">{c.label}</p>
+              {items.map(f => (
+                <button
+                  key={f.example}
+                  onClick={() => onSelect(f.example)}
+                  className="w-full flex items-start gap-3 px-4 py-2 hover:bg-white/[0.04] transition-colors text-left group"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-white font-medium leading-snug truncate">{f.example}</p>
+                    <p className="text-[10px] text-slate-600 group-hover:text-slate-500 transition-colors mt-0.5">{f.label}</p>
+                  </div>
+                </button>
+              ))}
             </div>
-          </button>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -846,6 +929,9 @@ export default function App() {
   const [currentPage,     setCurrentPage]     = useState<'chat' | 'echo'>('chat')
   const [echoAlerts,      setEchoAlerts]      = useState<EchoWsMessage[]>([])
   const wsRef = useRef<WebSocket | null>(null)
+
+  // Tracks the last text written by the mic so we don't overwrite manual edits
+  const micTextRef = useRef('')
 
   const abortRef       = useRef<AbortController | null>(null)
   const textareaRef    = useRef<HTMLTextAreaElement>(null)
@@ -1659,6 +1745,7 @@ export default function App() {
                     value={input}
                     onChange={e => {
                       const v = e.target.value
+                      micTextRef.current = v   // keep in sync so mic doesn't fight user edits
                       setInput(v)
                       autoResize(e.target)
                       // Show slash menu when input starts with /
@@ -1696,12 +1783,17 @@ export default function App() {
                         disabled={!account || isLoading}
                         wallet={account?.address}
                         onLiveText={(text) => {
-                          // Interim results — show text live in the input as you speak
-                          setInput(text)
+                          // Only overwrite if the user hasn't manually edited the field
+                          setInput(prev => {
+                            if (prev !== micTextRef.current) return prev  // user edited — leave it alone
+                            micTextRef.current = text
+                            return text
+                          })
                           if (textareaRef.current) autoResize(textareaRef.current)
                         }}
                         onTranscription={(text) => {
-                          // Final result — set and auto-submit after 2 s
+                          // Final commit — always write, then clear the mic tracker
+                          micTextRef.current = ''
                           setInput(text)
                           if (textareaRef.current) autoResize(textareaRef.current)
                           setTimeout(() => sendMessage(text), 2000)
