@@ -44,6 +44,10 @@ import {
 import { startScheduler }        from './scheduler/worker.js'
 import { startConditionMonitor, getCurrentPrice, getAllPrices } from './conditions/monitor.js'
 import { startAlertMonitor, registerWallet }     from './alerts/monitor.js'
+import { readEchoData, writeEchoData }           from './echo/walrus.js'
+import { calculateEchoScore, scoreInsights }     from './echo/score.js'
+import { parseRule }                             from './echo/rules.js'
+import { generateSessionKeypair, storeSessionKey, buildSessionAuthPtb, MODE_LIMITS } from './echo/session.js'
 
 /* ─── VektorRegistry — local JSON counter ────────────────────────────────── */
 
@@ -1519,12 +1523,6 @@ app.post('/api/transcribe', async (req, res) => {
 })
 
 /* ─── Echo API ────────────────────────────────────────────────────────── */
-
-import { readEchoData, writeEchoData, logActivity } from './echo/walrus.js'
-import { calculateEchoScore, scoreInsights }        from './echo/score.js'
-import { parseRule }                                from './echo/rules.js'
-import { generateSessionKeypair, storeSessionKey, buildSessionAuthPtb, MODE_LIMITS } from './echo/session.js'
-import type { EchoRule, WatchCondition, ScheduledIntent } from './echo/types.js'
 
 // GET /api/echo/:wallet — load full Echo state
 app.get('/api/echo/:wallet', async (req, res) => {
