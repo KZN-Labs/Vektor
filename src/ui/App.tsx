@@ -1542,7 +1542,6 @@ export default function App() {
 
         {/* ── Chat area (hidden when on Echo page) ────────────────── */}
         <div className={`flex-1 flex flex-col overflow-hidden ${currentPage !== 'chat' ? 'hidden' : ''}`}>
-        <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
 
