@@ -750,60 +750,56 @@ function AlertBanner({ alerts, onDismiss, onExecute }: AlertBannerProps) {
 /* ─── Full feature list — shown when user types / ─────────────────────────── */
 
 interface FeatureEntry {
-  example:  string   // fills the input on click
-  label:    string   // one-line description
+  starter:  string   // what gets typed into the input — just the command word(s)
+  label:    string   // one-line description of what it does
+  hint:     string   // usage hint shown in grey — NOT inserted, just a guide
   category: string
 }
 
 const ALL_FEATURES: FeatureEntry[] = [
   // ── Swap & Trading ──────────────────────────────────────────────────────
-  { category: 'Swap',       example: 'Swap 1 SUI to USDC',                              label: 'Exchange one token for another via best route'        },
-  { category: 'Swap',       example: 'Swap 50 USDC to SUI with max 0.5% slippage',      label: 'Swap with a slippage cap'                             },
-  { category: 'Swap',       example: 'Buy LOFI memecoin with 10 USDC',                  label: 'Buy a memecoin / speculative token'                   },
-  { category: 'Swap',       example: 'Sell my BLUB',                                    label: 'Exit a memecoin position'                             },
-  { category: 'Swap',       example: 'Buy LOFI and exit at 20% profit',                 label: 'Buy and auto-exit when profit target is hit'          },
-  { category: 'Swap',       example: 'Buy OCEAN with stop loss at 15%',                 label: 'Buy with automatic stop-loss protection'              },
-  { category: 'Swap',       example: 'Rebalance my portfolio to 50% SUI 50% USDC',      label: 'Rebalance to target weights'                          },
-  { category: 'Swap',       example: 'Compound my rewards on Cetus',                    label: 'Reinvest yield/rewards automatically'                  },
+  { category: 'Swap',       starter: 'Swap ',        label: 'Exchange one token for another',            hint: 'e.g. Swap 1 SUI to USDC'                         },
+  { category: 'Swap',       starter: 'Buy ',          label: 'Buy a token or memecoin',                  hint: 'e.g. Buy LOFI with 10 USDC'                      },
+  { category: 'Swap',       starter: 'Sell ',         label: 'Sell a token or exit a position',          hint: 'e.g. Sell my BLUB'                               },
+  { category: 'Swap',       starter: 'Rebalance ',    label: 'Rebalance portfolio to target weights',    hint: 'e.g. Rebalance to 50% SUI 50% USDC'              },
+  { category: 'Swap',       starter: 'Compound ',     label: 'Reinvest yield or rewards automatically',  hint: 'e.g. Compound my rewards on Cetus'               },
+  { category: 'Swap',       starter: 'Exit ',         label: 'Exit a position entirely',                 hint: 'e.g. Exit my SUI position'                       },
   // ── NAVI ────────────────────────────────────────────────────────────────
-  { category: 'NAVI',       example: 'Lend 100 USDC on NAVI',                           label: 'Deposit assets to NAVI to earn yield'                 },
-  { category: 'NAVI',       example: 'Borrow 50 USDC from NAVI',                        label: 'Borrow against your collateral on NAVI'               },
-  { category: 'NAVI',       example: 'Repay 50 USDC on NAVI',                           label: 'Repay borrowed debt on NAVI'                          },
-  { category: 'NAVI',       example: 'Check my health factor',                           label: 'View your NAVI liquidation health factor'             },
-  { category: 'NAVI',       example: 'Check my open positions',                          label: 'See all open NAVI positions'                          },
+  { category: 'NAVI',       starter: 'Lend ',         label: 'Supply assets to NAVI to earn yield',      hint: 'e.g. Lend 100 USDC on NAVI'                      },
+  { category: 'NAVI',       starter: 'Borrow ',       label: 'Borrow against your collateral',           hint: 'e.g. Borrow 50 USDC from NAVI'                   },
+  { category: 'NAVI',       starter: 'Repay ',        label: 'Repay borrowed debt on NAVI',              hint: 'e.g. Repay 50 USDC on NAVI'                      },
+  { category: 'NAVI',       starter: 'Check health factor', label: 'View your liquidation safety score', hint: 'just send as-is'                                 },
+  { category: 'NAVI',       starter: 'Check positions', label: 'See all open NAVI positions',            hint: 'just send as-is'                                 },
   // ── Automation ──────────────────────────────────────────────────────────
-  { category: 'Automate',   example: 'DCA 10 USDC into SUI every day for 30 days',      label: 'Dollar-cost average into an asset over time'          },
-  { category: 'Automate',   example: 'DCA 50 USDC into SUI every Friday',               label: 'Weekly DCA on a specific day'                        },
-  { category: 'Automate',   example: 'Send 5 USDC to 0xabc every month',                label: 'Recurring scheduled payment'                          },
-  { category: 'Automate',   example: 'Swap 0.5 SUI to USDC in 10 minutes',              label: 'Delayed one-time action'                              },
-  { category: 'Automate',   example: 'Lend 100 USDC on NAVI tomorrow at noon',          label: 'Scheduled future action'                              },
+  { category: 'Automate',   starter: 'DCA ',          label: 'Dollar-cost average into an asset',        hint: 'e.g. DCA 10 USDC into SUI every day for 30 days' },
+  { category: 'Automate',   starter: 'Schedule ',     label: 'Schedule a recurring or future action',    hint: 'e.g. Schedule swap 1 SUI to USDC every Friday'   },
+  { category: 'Automate',   starter: 'Send ',         label: 'Send tokens — once or on a schedule',      hint: 'e.g. Send 5 USDC to 0x... every month'           },
   // ── Conditions ──────────────────────────────────────────────────────────
-  { category: 'Conditions', example: 'Swap my SUI to USDC if SUI drops below $3',       label: 'Trigger a swap when price crosses a threshold'        },
-  { category: 'Conditions', example: 'Buy SUI if SUI goes above $5',                    label: 'Buy trigger on price rise'                            },
-  { category: 'Conditions', example: 'Exit all memecoins if my health factor drops below 1.5', label: 'Protect your NAVI position automatically'      },
-  // ── Portfolio & Info ─────────────────────────────────────────────────────
-  { category: 'Portfolio',  example: 'Check my balance',                                 label: 'Show all token balances'                              },
-  { category: 'Portfolio',  example: 'How much USDC do I have',                          label: 'Check balance of a specific token'                    },
-  { category: 'Portfolio',  example: 'Analyze my wallet',                                label: 'Deep AI analysis of your portfolio with recommendations' },
-  { category: 'Portfolio',  example: 'Price of SUI',                                     label: 'Look up current market price of a token'              },
-  { category: 'Portfolio',  example: 'What is WETH worth',                               label: 'Token price query'                                    },
-  { category: 'Portfolio',  example: 'Show my recent transactions',                      label: 'View recent transaction history'                      },
-  { category: 'Portfolio',  example: 'Explain transaction D8zRVkhz...',                  label: 'AI explanation of any Sui transaction digest'         },
+  { category: 'Conditions', starter: 'Swap if ',      label: 'Trigger a swap when a price condition hits', hint: 'e.g. Swap SUI to USDC if SUI drops below $3'   },
+  { category: 'Conditions', starter: 'Buy if ',       label: 'Buy when a price target is reached',       hint: 'e.g. Buy SUI if SUI goes above $5'               },
+  { category: 'Conditions', starter: 'Exit if ',      label: 'Auto-exit a position on a condition',      hint: 'e.g. Exit my LOFI if health factor drops below 1.5' },
+  { category: 'Conditions', starter: 'Buy ',          label: 'Buy with auto profit-exit or stop-loss',   hint: 'e.g. Buy LOFI and exit at 20% profit / stop loss at 15%' },
+  // ── Portfolio ────────────────────────────────────────────────────────────
+  { category: 'Portfolio',  starter: 'Check balance', label: 'Show all your token balances',             hint: 'or: How much USDC do I have'                     },
+  { category: 'Portfolio',  starter: 'Analyze ',      label: 'Deep AI analysis with recommendations',    hint: 'e.g. Analyze my wallet'                          },
+  { category: 'Portfolio',  starter: 'Price of ',     label: 'Look up the current price of a token',     hint: 'e.g. Price of SUI'                               },
+  { category: 'Portfolio',  starter: 'Explain ',      label: 'Explain any Sui transaction by digest',    hint: 'e.g. Explain transaction D8zRVk...'              },
+  { category: 'Portfolio',  starter: 'Transaction history', label: 'Show your recent on-chain activity', hint: 'just send as-is'                                 },
   // ── Payments ─────────────────────────────────────────────────────────────
-  { category: 'Payments',   example: 'Send 10 USDC to 0xabc123...',                     label: 'Direct transfer to a wallet address'                  },
-  { category: 'Payments',   example: 'Request payment of 50 USDC',                      label: 'Generate a shareable payment request link'            },
-  { category: 'Payments',   example: 'Pay Mum 50 USDC',                                 label: 'Pay a saved contact by name'                          },
-  { category: 'Payments',   example: 'Pay my staff 200 USDC each',                      label: 'Batch pay all members of a group'                     },
-  { category: 'Payments',   example: 'Split 1000 USDC among my contractors',            label: 'Split an amount equally across a group'               },
+  { category: 'Payments',   starter: 'Send ',         label: 'Transfer tokens to a wallet address',      hint: 'e.g. Send 10 USDC to 0x...'                     },
+  { category: 'Payments',   starter: 'Request ',      label: 'Generate a payment request link',          hint: 'e.g. Request payment of 50 USDC'                 },
+  { category: 'Payments',   starter: 'Pay ',          label: 'Pay a saved contact by name',              hint: 'e.g. Pay Mum 50 USDC'                            },
+  { category: 'Payments',   starter: 'Pay my ',       label: 'Batch-pay all members of a group',         hint: 'e.g. Pay my staff 200 USDC each'                 },
+  { category: 'Payments',   starter: 'Split ',        label: 'Split an amount across a group equally',   hint: 'e.g. Split 1000 USDC among my contractors'       },
   // ── Contacts ─────────────────────────────────────────────────────────────
-  { category: 'Contacts',   example: '/contact add Mum 0xabc123...',                    label: 'Save a wallet address as a contact'                   },
-  { category: 'Contacts',   example: '/contact list',                                    label: 'List all saved contacts'                              },
-  { category: 'Contacts',   example: '/contact remove Mum',                              label: 'Remove a contact'                                     },
+  { category: 'Contacts',   starter: '/contact add ', label: 'Save a wallet address as a named contact', hint: 'e.g. /contact add Mum 0x...'                     },
+  { category: 'Contacts',   starter: '/contact list', label: 'List all your saved contacts',             hint: 'just send as-is'                                 },
+  { category: 'Contacts',   starter: '/contact remove ', label: 'Remove a contact by name',              hint: 'e.g. /contact remove Mum'                        },
   // ── Groups ───────────────────────────────────────────────────────────────
-  { category: 'Groups',     example: '/group create Staff with Alice, Bob, Carol',       label: 'Create a named payment group'                         },
-  { category: 'Groups',     example: '/group list',                                      label: 'List all groups'                                      },
-  { category: 'Groups',     example: '/group show Staff',                                label: 'Show members of a group'                              },
-  { category: 'Groups',     example: '/group add Staff Dave 0xabc123...',               label: 'Add a member to an existing group'                    },
+  { category: 'Groups',     starter: '/group create ', label: 'Create a named group for batch payments', hint: 'e.g. /group create Staff with Alice, Bob'         },
+  { category: 'Groups',     starter: '/group list',    label: 'List all your groups',                    hint: 'just send as-is'                                  },
+  { category: 'Groups',     starter: '/group show ',   label: 'See who is in a group',                   hint: 'e.g. /group show Staff'                           },
+  { category: 'Groups',     starter: '/group add ',    label: 'Add a member to an existing group',       hint: 'e.g. /group add Staff Dave 0x...'                 },
 ]
 
 const CATEGORY_ORDER = ['Swap', 'NAVI', 'Automate', 'Conditions', 'Portfolio', 'Payments', 'Contacts', 'Groups']
@@ -820,24 +816,23 @@ const CATEGORY_COLOR: Record<string, string> = {
 
 interface SlashMenuProps {
   filter:   string
-  onSelect: (example: string) => void
+  onSelect: (starter: string) => void
   onClose:  () => void
 }
 
 function SlashMenu({ filter, onSelect, onClose }: SlashMenuProps) {
-  const q = filter.slice(1).toLowerCase().trim()   // strip leading /
+  const q = filter.slice(1).toLowerCase().trim()
 
   const matches = q
     ? ALL_FEATURES.filter(f =>
-        f.example.toLowerCase().includes(q) ||
+        f.starter.toLowerCase().includes(q) ||
         f.label.toLowerCase().includes(q)   ||
         f.category.toLowerCase().includes(q)
       )
-    : ALL_FEATURES   // show all when just /
+    : ALL_FEATURES
 
   if (matches.length === 0) return null
 
-  // Group by category preserving CATEGORY_ORDER
   const grouped: Record<string, FeatureEntry[]> = {}
   for (const cat of CATEGORY_ORDER) grouped[cat] = []
   for (const f of matches) {
@@ -848,32 +843,34 @@ function SlashMenu({ filter, onSelect, onClose }: SlashMenuProps) {
     <div className="absolute bottom-full mb-2 left-0 right-0 bg-[#0d0d12] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-30">
       <div className="px-4 py-2.5 border-b border-white/5 flex items-center justify-between">
         <span className="text-[9px] font-mono uppercase tracking-widest text-slate-500">
-          {q ? `${matches.length} features` : 'All Vektor features — click to use'}
+          Vektor features · click to start
         </span>
         <button onClick={onClose} className="text-[10px] text-slate-700 hover:text-slate-400 leading-none">✕</button>
       </div>
 
-      <div className="max-h-96 overflow-y-auto divide-y divide-white/[0.03]">
+      <div className="max-h-96 overflow-y-auto">
         {CATEGORY_ORDER.map(cat => {
           const items = grouped[cat]
           if (!items?.length) return null
           return (
-            <div key={cat}>
-              <div className="px-4 pt-2.5 pb-1">
+            <div key={cat} className="border-b border-white/[0.04] last:border-0">
+              <div className="px-4 pt-3 pb-1.5">
                 <span className={`text-[9px] font-mono uppercase tracking-widest font-semibold ${CATEGORY_COLOR[cat]}`}>
                   {cat}
                 </span>
               </div>
               {items.map(f => (
                 <button
-                  key={f.example}
-                  onClick={() => onSelect(f.example)}
-                  className="w-full flex items-start gap-3 px-4 py-2 hover:bg-white/[0.04] transition-colors text-left group"
+                  key={f.starter}
+                  onClick={() => onSelect(f.starter)}
+                  className="w-full flex items-baseline gap-3 px-4 py-2 hover:bg-white/[0.04] transition-colors text-left group"
                 >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs text-white font-medium leading-snug truncate">{f.example}</p>
-                    <p className="text-[10px] text-slate-600 group-hover:text-slate-500 transition-colors mt-0.5">{f.label}</p>
-                  </div>
+                  {/* Command word — what gets typed */}
+                  <span className="text-sm text-white font-medium shrink-0">{f.starter.trim()}</span>
+                  {/* Description */}
+                  <span className="text-[11px] text-slate-500 group-hover:text-slate-400 transition-colors min-w-0 truncate">{f.label}</span>
+                  {/* Usage hint — far right, grey */}
+                  <span className="text-[10px] text-slate-700 shrink-0 hidden group-hover:inline font-mono">{f.hint}</span>
                 </button>
               ))}
             </div>
@@ -1725,10 +1722,14 @@ export default function App() {
                 {showSlashMenu && account && (
                   <SlashMenu
                     filter={input}
-                    onSelect={(cmd) => {
-                      setInput(cmd)
+                    onSelect={(starter) => {
+                      setInput(starter)
                       setShowSlashMenu(false)
-                      textareaRef.current?.focus()
+                      // Place cursor at end of the starter text
+                      requestAnimationFrame(() => {
+                        const el = textareaRef.current
+                        if (el) { el.focus(); el.setSelectionRange(starter.length, starter.length) }
+                      })
                     }}
                     onClose={() => setShowSlashMenu(false)}
                   />
