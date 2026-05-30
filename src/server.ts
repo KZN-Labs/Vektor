@@ -1501,10 +1501,186 @@ app.post('/api/transcribe', async (req, res) => {
   }
 })
 
+/* ─── Echo API ────────────────────────────────────────────────────────── */
+
+import { readEchoData, writeEchoData, logActivity } from './echo/walrus.js'
+import { calculateEchoScore, scoreInsights }        from './echo/score.js'
+import { parseRule }                                from './echo/rules.js'
+import { generateSessionKeypair, storeSessionKey, buildSessionAuthPtb, MODE_LIMITS } from './echo/session.js'
+import type { EchoRule, WatchCondition, ScheduledIntent } from './echo/types.js'
+
+// GET /api/echo/:wallet — load full Echo state
+app.get('/api/echo/:wallet', async (req, res) => {
+  try {
+    const data = await readEchoData(req.params.wallet)
+    res.json({ ok: true, data })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+// POST /api/echo/:wallet/mode — switch mode
+app.post('/api/echo/:wallet/mode', async (req, res) => {
+  try {
+    const { mode } = req.body as { mode: 'basic' | 'medium' | 'high' }
+    if (!['basic', 'medium', 'high'].includes(mode)) {
+      res.status(400).json({ ok: false, error: 'Invalid mode' }); return
+    }
+    const data = await readEchoData(req.params.wallet)
+    data.mode  = mode
+    await writeEchoData(req.params.wallet, data)
+    res.json({ ok: true, mode })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+// POST /api/echo/:wallet/rules — parse + add a rule
+app.post('/api/echo/:wallet/rules', async (req, res) => {
+  try {
+    const { raw } = req.body as { raw: string }
+    if (!raw?.trim()) { res.status(400).json({ ok: false, error: 'Rule text required' }); return }
+
+    const { parsed, interpretation } = await parseRule(raw.trim())
+
+    const rule: EchoRule = {
+      id:        crypto.randomUUID(),
+      raw:       raw.trim(),
+      parsed,
+      active:    true,
+      createdAt: Date.now(),
+    }
+
+    const data = await readEchoData(req.params.wallet)
+    data.rules.push(rule)
+    await writeEchoData(req.params.wallet, data)
+    res.json({ ok: true, rule, interpretation })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+// DELETE /api/echo/:wallet/rules/:id
+app.delete('/api/echo/:wallet/rules/:id', async (req, res) => {
+  try {
+    const data  = await readEchoData(req.params.wallet)
+    data.rules  = data.rules.filter(r => r.id !== req.params.id)
+    await writeEchoData(req.params.wallet, data)
+    res.json({ ok: true })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+// POST /api/echo/:wallet/score — recalculate and store Echo Score
+app.post('/api/echo/:wallet/score', async (req, res) => {
+  try {
+    const { portfolio, naviPositions } = req.body
+    const score = calculateEchoScore(portfolio, naviPositions ?? null)
+    const insights = scoreInsights(score)
+
+    const data = await readEchoData(req.params.wallet)
+    data.echoScore = score
+    await writeEchoData(req.params.wallet, data)
+    res.json({ ok: true, score, insights })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+// POST /api/echo/:wallet/session-key — generate ephemeral keypair + return PTB for user to sign
+app.post('/api/echo/:wallet/session-key', async (req, res) => {
+  try {
+    const { mode, packageId, expiryDays = 7 } = req.body as {
+      mode:      'medium' | 'high'
+      packageId: string
+      expiryDays?: number
+    }
+    if (!packageId) { res.status(400).json({ ok: false, error: 'packageId required' }); return }
+
+    const keypair    = generateSessionKeypair()
+    const sessionAddr = keypair.getPublicKey().toSuiAddress()
+    const limits     = MODE_LIMITS[mode]
+    const expiresAt  = Date.now() + expiryDays * 24 * 60 * 60 * 1000
+
+    // Store private key on Walrus
+    const secretKey = keypair.getSecretKey()
+    await storeSessionKey(req.params.wallet, secretKey instanceof Uint8Array ? secretKey : Buffer.from(secretKey as any))
+
+    // Build unsigned PTB for the user to sign with their main wallet
+    const ptbB64 = await buildSessionAuthPtb({
+      packageId,
+      sessionAddr,
+      maxPerTx:  limits.maxPerTx,
+      maxPerDay: limits.maxPerDay,
+      expiresAt,
+    })
+
+    res.json({
+      ok: true,
+      sessionAddress: sessionAddr,
+      expiresAt,
+      ptbB64,         // user must sign this with their main wallet
+      limits: {
+        maxPerTx:  limits.maxPerTx.toString(),
+        maxPerDay: limits.maxPerDay.toString(),
+      },
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+// POST /api/echo/:wallet/session-key/confirm — store auth object ID after user signed
+app.post('/api/echo/:wallet/session-key/confirm', async (req, res) => {
+  try {
+    const { authObjectId, sessionAddress, expiresAt, maxAmountPerTx, maxAmountPerDay } = req.body
+    const data = await readEchoData(req.params.wallet)
+    data.sessionKeyMetadata = { publicKey: sessionAddress, authObjectId, expiresAt, maxAmountPerTx, maxAmountPerDay }
+    await writeEchoData(req.params.wallet, data)
+    res.json({ ok: true })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+// DELETE /api/echo/:wallet/session-key — revoke
+app.delete('/api/echo/:wallet/session-key', async (req, res) => {
+  try {
+    const data = await readEchoData(req.params.wallet)
+    delete data.sessionKeyMetadata
+    await writeEchoData(req.params.wallet, data)
+    res.json({ ok: true })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
+// POST /api/echo/:wallet/parse-rule — parse only, don't save (for preview)
+app.post('/api/echo/:wallet/parse-rule', async (req, res) => {
+  try {
+    const { raw } = req.body as { raw: string }
+    if (!raw?.trim()) { res.status(400).json({ ok: false, error: 'Rule text required' }); return }
+    const result = await parseRule(raw.trim())
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.status(500).json({ ok: false, error: msg })
+  }
+})
+
 /* ─── Health ─────────────────────────────────────────────────────────── */
 
 app.get('/api/health', (_, res) => {
-  res.json({ ok: true, version: '2.0.0', features: ['guardian', 'navi', 'dca', 'conditions', 'memory', 'alerts', 'contacts', 'voice'] })
+  res.json({ ok: true, version: '2.1.0', features: ['guardian', 'navi', 'dca', 'conditions', 'memory', 'alerts', 'contacts', 'voice', 'echo'] })
 })
 
 /* ─── Start ───────────────────────────────────────────────────────────── */

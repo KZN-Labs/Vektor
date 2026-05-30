@@ -7,6 +7,8 @@ import { ConfirmationGate } from './ConfirmationGate'
 import { Sidebar }          from './Sidebar'
 import { ContactsPage }     from './ContactsPage'
 import { MicButton }        from './MicButton'
+import EchoPage             from './EchoPage'
+import type { EchoWsMessage } from '../echo/types'
 
 /* ─── Types ──────────────────────────────────────────────────────────────── */
 
@@ -841,6 +843,9 @@ export default function App() {
   const [incomingPayment, setIncomingPayment] = useState<any>(null) // from ?pay= URL param
   const [contactsOpen,    setContactsOpen]    = useState(false)
   const [showSlashMenu,   setShowSlashMenu]   = useState(false)
+  const [currentPage,     setCurrentPage]     = useState<'chat' | 'echo'>('chat')
+  const [echoAlerts,      setEchoAlerts]      = useState<EchoWsMessage[]>([])
+  const wsRef = useRef<WebSocket | null>(null)
 
   const abortRef       = useRef<AbortController | null>(null)
   const textareaRef    = useRef<HTMLTextAreaElement>(null)
@@ -955,6 +960,35 @@ export default function App() {
     poll() // fetch immediately on connect
     const interval = setInterval(poll, 30_000)
     return () => clearInterval(interval)
+  }, [account?.address])
+
+  // Echo WebSocket — connect when wallet is active
+  useEffect(() => {
+    if (!account) { wsRef.current?.close(); wsRef.current = null; return }
+
+    const echoWorkerUrl = (import.meta as any).env?.VITE_ECHO_WORKER_URL
+    if (!echoWorkerUrl) return  // not configured yet — skip
+
+    function connect() {
+      const ws = new WebSocket(`${echoWorkerUrl}/ws/${account!.address}`)
+      wsRef.current = ws
+
+      ws.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(evt.data) as EchoWsMessage
+          setEchoAlerts(prev => [...prev.slice(-9), msg])  // keep last 10
+        } catch { /* ignore malformed */ }
+      }
+
+      ws.onclose = () => {
+        wsRef.current = null
+        // Reconnect after 5 s
+        setTimeout(connect, 5_000)
+      }
+    }
+
+    connect()
+    return () => { wsRef.current?.close(); wsRef.current = null }
   }, [account?.address])
 
   function autoResize(el: HTMLTextAreaElement) {
@@ -1392,12 +1426,31 @@ export default function App() {
 
       {/* ── Header ─────────────────────────────────────────────────── */}
       <header className="shrink-0 px-6 py-4 border-b border-white/5 flex items-center justify-between bg-[#0a0a0f]/90 backdrop-blur-md z-20">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           <VektorLogo className="h-7 w-auto text-white" />
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-xs text-slate-500 font-mono">mainnet</span>
           </div>
+          {/* Nav links */}
+          <nav className="flex items-center gap-1 ml-2">
+            {(['chat', 'echo'] as const).map(page => (
+              <button
+                key={page}
+                onClick={() => setCurrentPage(page)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-mono uppercase tracking-widest transition-colors ${
+                  currentPage === page
+                    ? 'bg-purple-600/20 border border-purple-500/30 text-purple-300'
+                    : 'text-slate-600 hover:text-slate-400'
+                }`}
+              >
+                {page === 'echo' && echoAlerts.length > 0 && (
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-400 mr-1.5 mb-0.5 animate-pulse" />
+                )}
+                {page}
+              </button>
+            ))}
+          </nav>
         </div>
 
         {account ? (
@@ -1482,7 +1535,13 @@ export default function App() {
       {/* ── Body ────────────────────────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden">
 
-        {/* ── Chat area ─────────────────────────────────────────────── */}
+        {/* ── Echo page ─────────────────────────────────────────────── */}
+        {currentPage === 'echo' && (
+          <EchoPage wsAlerts={echoAlerts} />
+        )}
+
+        {/* ── Chat area (hidden when on Echo page) ────────────────── */}
+        <div className={`flex-1 flex flex-col overflow-hidden ${currentPage !== 'chat' ? 'hidden' : ''}`}>
         <div className="flex-1 flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">

@@ -1,0 +1,27 @@
+name            = "echo-worker"
+main            = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["* * * * *"]   # every 60 seconds
+
+[vars]
+SUI_NETWORK    = "testnet"
+SUI_RPC_URL    = "https://fullnode.testnet.sui.io"
+WALRUS_NETWORK = "testnet"
+
+# Durable Object for WebSocket hub
+[[durable_objects.bindings]]
+name       = "ECHO_HUB"
+class_name = "EchoHub"
+
+[[migrations]]
+tag            = "v1"
+new_classes    = ["EchoHub"]
+
+# Set secrets with: wrangler secret put SECRET_NAME
+# Secrets needed:
+#   SUI_PRIVATE_KEY          - server keypair for Walrus writes
+#   ANTHROPIC_API_KEY        - for rule evaluation (optional)
+#   ECHO_REGISTRY_PACKAGE_ID - deployed Move package ID

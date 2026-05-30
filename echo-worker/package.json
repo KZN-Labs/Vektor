@@ -1,0 +1,19 @@
+{
+  "name": "echo-worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev":    "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types":  "wrangler types"
+  },
+  "dependencies": {
+    "@mysten/sui":    "^1.21.0",
+    "@mysten/walrus": "^1.1.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241224.0",
+    "typescript":                "^5.7.2",
+    "wrangler":                  "^3.103.2"
+  }
+}
