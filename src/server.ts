@@ -1486,14 +1486,14 @@ app.post('/api/transcribe', async (req, res) => {
       return
     }
 
-    const audioFile = new File([fileBuffer], `voice.${ext}`, { type: mimeType })
-
+    // `new File(...)` is not available in all Node.js versions.
+    // Use the SDK's toFile() helper — works in Node 18+.
     let transcription: string
     if (groqKey) {
-      // Groq Whisper — faster, free tier, already integrated
-      const { default: Groq } = await import('groq-sdk')
-      const groq = new Groq({ apiKey: groqKey })
-      const result = await groq.audio.transcriptions.create({
+      const { default: Groq, toFile } = await import('groq-sdk')
+      const groq      = new Groq({ apiKey: groqKey })
+      const audioFile = await toFile(fileBuffer, `voice.${ext}`, { type: mimeType })
+      const result    = await groq.audio.transcriptions.create({
         file:            audioFile,
         model:           'whisper-large-v3-turbo',
         language:        lang && lang !== 'en' ? lang : undefined,
@@ -1501,10 +1501,10 @@ app.post('/api/transcribe', async (req, res) => {
       })
       transcription = typeof result === 'string' ? result : (result as any).text ?? ''
     } else {
-      // OpenAI Whisper fallback
-      const { default: OpenAI } = await import('openai')
-      const openai = new OpenAI({ apiKey: openaiKey })
-      const result = await openai.audio.transcriptions.create({
+      const { default: OpenAI, toFile } = await import('openai')
+      const openai    = new OpenAI({ apiKey: openaiKey })
+      const audioFile = await toFile(fileBuffer, `voice.${ext}`, { type: mimeType })
+      const result    = await openai.audio.transcriptions.create({
         file:            audioFile,
         model:           'whisper-1',
         language:        lang && lang !== 'en' ? lang : undefined,
